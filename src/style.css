@@ -445,3 +445,16 @@ body.touch #buy .buy-ic{font-size:22px;width:30px}
 body.touch #buy .buy-btns{flex-direction:row}
 body.touch #buy .buy-btns button{min-width:64px;padding:6px 8px}
 body.modal-open #buy{display:none}
+
+/* ===== v3.1: 간단한 상태판 · 접힌 순위표 ===== */
+.hud-box{display:flex;align-items:center;gap:8px;padding:6px 10px;min-width:0}
+.hud-box .hud-money{font-size:17px;color:var(--accent);white-space:nowrap}
+.hud-box .bar{width:70px;min-width:70px;flex:none;height:8px}
+#h-warn{color:#ffcc00;letter-spacing:1px;font-size:14px}
+#h-warn:empty,#h-toy:empty{display:none}
+#h-toy{font-size:16px}
+.hud-combo{font-size:14px}
+#lb.fold{width:auto;padding:4px 8px}
+#lb.fold>*:not(.lb-h){display:none}
+#lb.fold .lb-h{margin:0}
+#lb.fold .lb-h::before{content:'🏆 '}

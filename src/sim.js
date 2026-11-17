@@ -167,7 +167,6 @@ export class Sim {
           if (i > 0) zz.buf[i - 1]--;
           if (toBelt) this.beltAdd(f, z, z, 1, null, true);
           else zz.buf[i]++;
-          if (last && !toBelt && zz.buf[i] === BASKET) f.ev.push(['full', z, i]);
         }
       }
     });
@@ -179,7 +178,7 @@ export class Sim {
       for (let u = 0; u < 3; u++) {
         if (!it.u[u] && it.d >= B.upg[u]) {
           it.u[u] = 1;
-          if (f.upg[u]) { it.mult *= UPGRADERS[u].mult; if (!it.auto || Math.random() < 0.25) this.fx(f, UPG_X[u], CY * TILE - 14, '×' + UPGRADERS[u].mult, '#9ff'); }
+          if (f.upg[u]) it.mult *= UPGRADERS[u].mult;
         }
       }
       if (it.d >= B.len) { f.belt.splice(k, 1); this.deliver(f, it); }
@@ -192,8 +191,7 @@ export class Sim {
         f.orders.splice(k, 1);
         f.missStreak++;
         for (const q of players) q.streak = 0;
-        if (f.missStreak >= 2 && f.missStreak % 2 === 0) this.sayF(f, line('nagMiss'), FACE.shock);
-        else this.sayF(f, line('orderMiss', { f: FISH[o.t].name }), FACE.shock);
+        if (f.missStreak >= 3 && f.missStreak % 3 === 0) this.sayF(f, line('nagMiss'), FACE.shock);
         this.sfxF(f, 'fail');
         for (const p of players) if (!p.fired && p.out <= 0) this.addStress(p, this.coop ? 6 : 10);
       }
@@ -256,7 +254,6 @@ export class Sim {
     const q = vip ? (n >= 3 ? 2 : 1) : this.coop ? randi(1, 2 + Math.floor(n / 2)) : randi(1, 3);
     const tt = vip ? 55 + 10 * q : 45 + 25 * q + 8 * t + (this.coop ? 10 : 0);
     f.orders.push({ id: f.nextOid++, t, q, d: 0, tl: tt, tt, boss: false, rush: !!rush, vip: !!vip, val: 0 });
-    if (!rush && !vip) this.sayF(f, line('order', { f: FISH[t].name, q, s: Math.round(tt) }));
     this.sfxF(f, 'order');
   }
 
@@ -377,7 +374,6 @@ export class Sim {
     if (g === 2) {
       p.combo = Math.min(99, p.combo + 1); p.stats.perfect++;
       p.ev.push(['combo', p.combo]);
-      if (p.combo >= 5 && p.combo % 5 === 0) this.sayF(this.fp(p), line('combo', { n: p.name, c: p.combo }), FACE.happy);
     } else { if (p.combo) p.ev.push(['combo', 0]); p.combo = 0; }
     return gm(g);
   }
@@ -448,9 +444,9 @@ export class Sim {
         return;
       }
       case 'drop': if (p.hold) { p.hold = null; this.sfxP(p, 'drop'); } return;
-      case 'fix': if (zz && zz.br && near('mach' + z)) { zz.br = false; this.sayF(f, line('fixed', { n: p.name }), FACE.happy); this.sfxF(f, 'fix'); } return;
-      case 'unhack': if (p.hack > 0 && near('pc')) { p.hack = 0; this.sfxP(p, 'fix'); this.sayP(p, line('unhack'), FACE.happy); } return;
-      case 'mop': if (f.slip > 0 && near('mop')) { f.slip = 0; this.sayF(f, line('mopped'), FACE.happy); this.sfxF(f, 'fix'); } return;
+      case 'fix': if (zz && zz.br && near('mach' + z)) { zz.br = false; this.sfxF(f, 'fix'); } return;
+      case 'unhack': if (p.hack > 0 && near('pc')) { p.hack = 0; this.sfxP(p, 'fix'); } return;
+      case 'mop': if (f.slip > 0 && near('mop')) { f.slip = 0; this.sfxF(f, 'fix'); } return;
       case 'fail': this.addStress(p, 5); if (p.combo) p.ev.push(['combo', 0]); p.combo = 0; this.sfxP(p, 'fail'); return;
       case 'bumpcat': return this.bumpCat(p, m.id);
     }
@@ -504,15 +500,14 @@ export class Sim {
         f.missStreak = 0;
         if (p && !it.auto) {
           p.streak = (p.streak || 0) + 1;
-          if (p.streak >= 3 && p.streak % 3 === 0) this.sayF(f, line('streak', { n: p.name }), FACE.happy);
-          else this.sayF(f, line(o.boss ? 'bossDone' : 'orderDone'), FACE.happy);
-        } else if (o.vip || o.boss) this.sayF(f, line(o.boss ? 'bossDone' : 'orderDone'), FACE.happy);
+        }
+        if (o.vip || o.boss) this.sayF(f, line(o.boss ? 'bossDone' : 'orderDone'), FACE.happy);
         if (this.tut) this.tut.flag = 'ship';
-      } else this.fx(f, tx, ty, `${o.d}/${o.q}`, '#fff');
+      }
     } else {
       const v = Math.round(value * SELL_RATE);
       this.gain(f, v, p && !it.auto ? p : null);
-      if (!it.auto || Math.random() < 0.5) this.fx(f, tx, ty, '+' + fmt(v), it.auto ? '#ffe066' : '#fff3a0');
+      if (!it.auto) this.fx(f, tx, ty, '+' + fmt(v), '#fff3a0');
       if (!it.auto) this.sfxF(f, 'coin');
     }
     if (t === 4 && p && !it.auto) { this.sayF(f, line('gold', { n: p.name }), FACE.happy); if (this.mode === 'vs') this.noteAll(`✨ ${p.name}님이 황금물고기를 출하했어요!`); }
@@ -567,15 +562,12 @@ export class Sim {
         this.sayF(f, line('buildFull', { f: FISH[pad.z].name }), FACE.happy);
       } else {
         // 앞 단계 바구니에 있던 건 다음 기계로 이어짐
-        this.sayF(f, line('build', { n: p.name, x: `${FISH[pad.z].name} ${MACHS[pad.i].name}` }), FACE.happy);
       }
       if (this.tut) this.tut.flag = 'build';
     } else if (pad.kind === 'upg') {
       f.upg[pad.i] = 1;
-      this.sayF(f, line('upg', { x: UPGRADERS[pad.i].name }), FACE.happy);
     } else if (pad.kind === 'deco') {
       f.deco[pad.i] = 1;
-      this.sayF(f, line('deco', { x: DECOS[pad.i].name }), FACE.happy);
     }
   }
 

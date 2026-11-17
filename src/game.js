@@ -41,6 +41,7 @@ export class Game {
     $('#hud-time-wrap').style.display = this.mode === 'tut' ? 'none' : '';
     $('#pc-tab-sab').style.display = this.vs ? '' : 'none';
     $('#lb').style.display = this.mode === 'tut' ? 'none' : '';
+    $('#lb').classList.add('fold');
     this.raf = requestAnimationFrame((t) => this.frame(t));
     this.lastT = performance.now();
     audio.bgm('factory');
@@ -120,7 +121,6 @@ export class Game {
       }
       case 'event': this.showEvent(a, b); break;
       case 'combo': if (a >= 2) { this.fxMe(`🔥 콤보 ${a}!`, '#ffb84a'); audio.sfx('combo'); } break;
-      case 'full': if (this.s && this.s.f) this.notice(`⚠ ${FISH[a].name} ${['바구니', '손질기', '포장기'][b]}가 꽉 찼어요! 꺼내 주세요`); break;
       case 'day': this.overlay(`${this.dayName(a)} 클리어!`, `실적 ${fmt(c)} / 목표 ${fmt(d)}`, 4.5); audio.sfx('win'); break;
     }
   }
@@ -169,9 +169,9 @@ export class Game {
     sb.style.transform = `scaleX(${st / 100})`;
     sb.style.background = st < 50 ? '#4cd964' : st < 80 ? '#ffcc00' : '#ff3b30';
     $('#h-stress-n').textContent = Math.round(st);
-    $('#h-warn').textContent = '⚠️'.repeat(me.wa) + '·'.repeat(Math.max(0, 3 - me.wa));
+    $('#h-warn').textContent = me.wa ? '⚠'.repeat(me.wa) : '';
     const cb = me.cb || 0;
-    $('#h-combo').textContent = cb ? `🔥 콤보 ${cb} · +${Math.round(Math.min(cb, COMBO_MAX) * COMBO_STEP * 100)}%` : '';
+    $('#h-combo').textContent = cb ? `🔥${cb}` : '';
     const evb = $('#evbar');
     if (f.ev) { const E = EVENTS.find((e) => e.id === f.ev[0]); evb.classList.add('show'); evb.className = 'show ev-' + f.ev[0]; evb.innerHTML = `${E.icon} <b>${E.name}</b>${E.dur ? ` · ${f.ev[1]}초` : ''}`; }
     else evb.className = '';
@@ -215,7 +215,7 @@ export class Game {
     const toy = TOYS.find((t) => t.id === (me.toy || this.pickToy()));
     tb.textContent = toy ? toy.icon : '🏐';
     tb.classList.toggle('on', !!me.toy);
-    $('#h-toy').textContent = me.toy ? `${toy.icon} ${toy.name} 사용 중${me.wk > 0 ? ' (일어나는 중…)' : ''}` : '';
+    $('#h-toy').textContent = me.toy ? toy.icon : '';
   }
 
   renderLb() {
@@ -240,7 +240,7 @@ export class Game {
       const k = e.key.toLowerCase();
       if (k === 'enter') { e.preventDefault(); this.openChat(); return; }
       if (k === 'escape') { this.closePc(); this.toggleEmotes(false); this.toggleMap(false); if (this.buyPadCur) { this.buyDismiss = this.padNear; $('#buy').classList.remove('show'); this.buyPadCur = null; } return; }
-      if (k === 'tab') { e.preventDefault(); $('#lb').classList.toggle('big'); return; }
+      if (k === 'tab') { e.preventDefault(); $('#lb').classList.toggle('fold'); return; }
       if (k === 'm') { this.toggleMap(); return; }
       if (this.pcOpen) return;
       this.keys.add(k);
@@ -293,7 +293,7 @@ export class Game {
       tap('#buy-yes', () => this.buyPad()),
       tap('#buy-no', () => { this.buyDismiss = this.padNear; $('#buy').classList.remove('show'); this.buyPadCur = null; }),
       tap('#mapov', () => this.toggleMap(false)),
-      tap('#lb', () => $('#lb').classList.toggle('big')),
+      tap('#lb', () => $('#lb').classList.toggle('fold')),
     ];
     document.querySelectorAll('#emotes button').forEach((b, i) => {
       const h = (e) => { e.preventDefault(); this.emote(i); this.toggleEmotes(false); };
@@ -768,25 +768,15 @@ export class Game {
         const u = s.f.z[st.z][0];
         label(ctx, (u ? '' : '🔒 ') + FISH[st.z].name + (u ? ' 수조' : ` · ${fmt(UNLOCK[st.z])}원`), lx, ly, u ? FISH[st.z].color : '#ffcc66');
       } else if (st.kind === 'mach') {
-        const zz = s.f.z[st.z]; if (!zz[0] || (!zz[3] && !zz[1])) continue;
+        const zz = s.f.z[st.z]; if (!zz[0] || !zz[1]) continue;
         ctx.font = `${Math.max(10, fs - 3)}px Galmuri11, sans-serif`;
-        label(ctx, zz[1] ? '⚠ 고장!' : `뜰채 Lv.${zz[3]}${!zz[4] ? ` · ${zz[7]}/${BASKET}` : ''}`, lx, ly - (zz[3] >= 3 ? 10 * sc : 0), zz[1] ? '#ff6b6b' : '#ffe066');
+        label(ctx, '⚠ 고장!', lx, ly, '#ff6b6b');
         ctx.font = `${fs}px Galmuri11, sans-serif`;
       } else if (st.kind === 'acut' || st.kind === 'apack') {
         const zz = s.f.z[st.z], i = st.kind === 'acut' ? 1 : 2;
         if (!zz[0] || !zz[3 + i]) continue;
-        const last = i === 2 ? !zz[6] : !zz[5];
-        ctx.font = `${Math.max(10, fs - 3)}px Galmuri11, sans-serif`;
-        label(ctx, `${i === 1 ? '손질기' : '포장기'} Lv.${zz[3 + i]}${last ? ` · ${zz[7 + i]}/${BASKET}` : ''}`, lx, ly, zz[7 + i] >= BASKET && last ? '#ff8a80' : '#bfe6ff');
-        ctx.font = `${fs}px Galmuri11, sans-serif`;
-      } else if (LBL[st.kind]) label(ctx, LBL[st.kind], lx, ly, '#e8edf5');
-    }
-    // 게이트 간판 글씨
-    ctx.font = `bold ${Math.max(10, fs - 2)}px Galmuri11, sans-serif`;
-    for (const gt of GATES) {
-      const q = polar((9 + R_WALK) / 2, gt); const [lx, ly] = W2S(q.x * TILE, q.y * TILE - 22 + 8);
-      if (lx < -100 || ly < -50 || lx > cv.width + 100 || ly > cv.height + 50) continue;
-      ctx.fillStyle = '#e8f5ec'; ctx.fillText(gateSignText(gt), lx, ly + fs * 0.35);
+        continue;
+      }
     }
     ctx.font = `${fs}px Galmuri11, sans-serif`;
     // 이름표 + 말풍선 + 이모트
@@ -833,11 +823,9 @@ export class Game {
     ctx.font = `${Math.max(10, fs - 3)}px Galmuri11, sans-serif`;
     for (const a of this.pads) {
       const pd = a.pad, px = (pd.x + pd.w / 2) * TILE, py = (pd.y + pd.h / 2) * TILE;
-      const d = Math.hypot(px - me.x, py - me.y);
       const [lx, ly] = W2S(px, py);
       if (lx < -60 || ly < -60 || lx > cv.width + 60 || ly > cv.height + 60) continue;
       ctx.font = `${Math.round(fs * (pd.w > 1 ? 1.5 : 1.1))}px sans-serif`; ctx.fillText(a.icon, lx, ly + fs * 0.4);
-      if (d < 90) { ctx.font = `${Math.max(10, fs - 3)}px Galmuri11, sans-serif`; label(ctx, `${a.label} ${fmt(a.price)}`, lx, ly - fs * 1.1, s.f.m >= a.price ? '#7dff8a' : '#ff8a80'); }
     }
     // 방향 화살표 (목표가 화면 밖일 때)
     if (g && g.st && this.opt.arrows && !mgActive() && !this.pcOpen) {
@@ -956,6 +944,8 @@ export class Game {
         if (cheap && g) g.sub = `💰 바닥 버튼으로 ${cheap.label} 구매 가능! (${fmt(cheap.price)})`;
       }
     }
+    if (this.mode !== 'tut' && this.t > 90 + 5) g = null; // 안내는 처음 90초만
+    if (g) g.sub = null;
     this.guide = g;
     const key = g ? g.text + (g.sub || '') : '';
     if (key !== this.guideKey) {
