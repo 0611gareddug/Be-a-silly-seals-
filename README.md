@@ -24,8 +24,10 @@ Be-a-silly-seals-/
 │  ├─ bots.js        AI 봇
 │  ├─ room.js        방 · 로비 · 게임 진행
 │  ├─ net.js         P2P 연결 (PeerJS)
-│  ├─ minigames.js   업무 미니게임 6종
-│  ├─ sprites.js     픽셀아트 (코드로 생성)
+│  ├─ minigames.js   업무 미니게임 6종 (포장 = 배선 퍼즐)
+│  ├─ world.js       원형 공장 맵 · 구조물 · 인테리어 그래픽
+│  ├─ lines.js       사장님 대사
+│  ├─ sprites.js     물범 · 생선 · 고양이 픽셀아트 (코드로 생성)
 │  ├─ audio.js       BGM · 효과음
 │  ├─ data.js        밸런스 수치 · 맵 배치
 │  └─ protect.js     소스 보호

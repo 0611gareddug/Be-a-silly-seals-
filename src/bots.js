@@ -66,8 +66,8 @@ export function botThink(sim, p, dt) {
   if (cat && !p.hold) return goTo(sim, p, 'cat', { id: cat.id }, { x: cat.x + rand(-4, 4), y: cat.y + 2 });
   if (a.shopCd <= 0 && !p.hold && wantShop(sim, p, f)) return goTo(sim, p, 'pc', {}, pt('pc'));
   if (p.hold) {
-    if (p.hold.s === 0) return goTo(sim, p, 'cut', {}, pt(nearest(p, ['cut0', 'cut1'])));
-    if (p.hold.s === 1) return goTo(sim, p, 'pack', {}, pt(nearest(p, ['pack0', 'pack1'])));
+    if (p.hold.s === 0) return goTo(sim, p, 'cut', {}, pt(nearest(p, ['cut0', 'cut1', 'cut2'])));
+    if (p.hold.s === 1) return goTo(sim, p, 'pack', {}, pt(nearest(p, ['pack0', 'pack1', 'pack2'])));
     return goTo(sim, p, 'ship', {}, pt('truck'));
   }
   let tier = -1;
@@ -87,7 +87,7 @@ function nearest(p, ids) {
 function pt(id, jitter) {
   const s = STATION_BY_ID[id];
   const q = stationPoint(s);
-  if (jitter) q.x += rand(-s.w * 5, s.w * 5);
+  if (jitter) { const horiz = Math.abs(q.y - (s.y + s.h / 2) * TILE) > Math.abs(q.x - (s.x + s.w / 2) * TILE); if (horiz) q.x += rand(-s.w * 4, s.w * 4); else q.y += rand(-s.h * 4, s.h * 4); }
   return q;
 }
 

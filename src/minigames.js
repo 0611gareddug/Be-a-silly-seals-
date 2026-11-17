@@ -1,3 +1,4 @@
+/* global __DEV__ */
 // ===== 업무 미니게임 =====
 import { FISH } from './data.js';
 import { audio } from './audio.js';
@@ -14,7 +15,7 @@ const TITLES = {
 const HINTS = {
   catch: '초록 칸에서 탭! (스페이스 / E / 클릭)',
   cut: '점선을 따라 한 번에 쭉 그어요',
-  pack: '조각을 끌어서 상자 칸을 빈틈없이 채워요',
+  pack: '같은 색 단자끼리 전선을 이어요 · 단자를 탭하면 그 색이 지워져요',
   repair: '빠르게 연타! (스페이스 / E / 탭)',
   reboot: '버튼을 꾹 누르고 있어요 (스페이스 / E / 길게 누르기)',
   mop: '좌우로 문질러요! (A·D / ←→ / 좌우 스와이프)',
@@ -29,15 +30,20 @@ export function runMinigame(kind, tier = 0) {
     root.querySelector('.mg-hint').textContent = HINTS[kind];
     const bar = root.querySelector('.mg-time i');
     root.classList.add('show');
+    root.classList.toggle('mg-big', kind === 'pack');
+    document.body.classList.add('modal-open');
+    const g = makeGame(kind, tier);
+    if (__DEV__) window.__mg = g;
+    const GW = g.lw || LW, GH = g.lh || LH;
     const dpr = Math.min(2, window.devicePixelRatio || 1);
     const fit = () => {
-      const w = Math.min(window.innerWidth * 0.94, 640, (window.innerHeight - 120) * (LW / LH));
-      cv.style.width = w + 'px'; cv.style.height = w * LH / LW + 'px';
-      cv.width = Math.round(w * dpr); cv.height = Math.round(w * LH / LW * dpr);
+      const reserve = window.innerHeight < 520 ? (kind === 'pack' ? 62 : 104) : 130;
+      const w = Math.min(window.innerWidth * 0.94, kind === 'pack' ? 720 : 640, (window.innerHeight - reserve) * (GW / GH));
+      cv.style.width = w + 'px'; cv.style.height = w * GH / GW + 'px';
+      cv.width = Math.round(w * dpr); cv.height = Math.round(w * GH / GW * dpr);
     };
     fit();
     const ctx = cv.getContext('2d');
-    const g = makeGame(kind, tier);
     let raf = 0, last = performance.now(), done = false;
     const finish = (r) => {
       if (done) return;
@@ -47,6 +53,7 @@ export function runMinigame(kind, tier = 0) {
       setTimeout(() => {
         cancelAnimationFrame(raf);
         root.classList.remove('show');
+        if (!document.querySelector('#pc.show') && !document.querySelector('#mapov.show')) document.body.classList.remove('modal-open');
         cleanup();
         active = null;
         resolve(r);
@@ -55,7 +62,7 @@ export function runMinigame(kind, tier = 0) {
     g.finish = finish;
     const toLocal = (e) => {
       const r = cv.getBoundingClientRect();
-      return { x: (e.clientX - r.left) / r.width * LW, y: (e.clientY - r.top) / r.height * LH };
+      return { x: (e.clientX - r.left) / r.width * GW, y: (e.clientY - r.top) / r.height * GH };
     };
     const pd = (e) => { e.preventDefault(); cv.setPointerCapture && cv.setPointerCapture(e.pointerId); if (!done) g.down && g.down(toLocal(e)); };
     const pm = (e) => { e.preventDefault(); if (!done) g.move && g.move(toLocal(e)); };
@@ -109,14 +116,14 @@ export function runMinigame(kind, tier = 0) {
         else g.update && g.update(dt);
       }
       bar.style.transform = `scaleX(${clamp(1 - g.t / g.limit, 0, 1)})`;
-      ctx.setTransform(cv.width / LW, 0, 0, cv.height / LH, 0, 0);
+      ctx.setTransform(cv.width / GW, 0, 0, cv.height / GH, 0, 0);
       ctx.imageSmoothingEnabled = false;
       g.draw(ctx);
       if (g.result) {
         ctx.fillStyle = g.result === 'ok' ? 'rgba(60,200,110,0.35)' : 'rgba(230,60,60,0.35)';
-        ctx.fillRect(0, 0, LW, LH);
+        ctx.fillRect(0, 0, GW, GH);
         ctx.fillStyle = '#fff'; ctx.font = 'bold 28px Galmuri11, sans-serif'; ctx.textAlign = 'center';
-        ctx.fillText(g.result === 'ok' ? '성공!' : g.result === 'fail' ? '실패…' : '', LW / 2, LH / 2 + 10);
+        ctx.fillText(g.result === 'ok' ? '성공!' : g.result === 'fail' ? '실패…' : '', GW / 2, GH / 2 + 10);
       }
       raf = requestAnimationFrame(loop);
     };
@@ -129,7 +136,7 @@ function makeGame(kind, tier) {
   switch (kind) {
     case 'catch': return gCatch(tier);
     case 'cut': return gCut(tier);
-    case 'pack': return gPack(tier);
+    case 'pack': return gWire(tier);
     case 'repair': return gMash();
     case 'reboot': return gHold();
     case 'mop': return gMop();
@@ -253,99 +260,203 @@ function gCut(tier) {
   return g;
 }
 
-// ---- 포장 ----
-const PCOL = ['#ff8a80', '#80d8ff', '#ccff90', '#ffd180', '#ea80fc', '#a7ffeb', '#ffff8d', '#b388ff', '#ff9e80', '#84ffff'];
-function gPack(tier) {
-  const N = [3, 3, 4, 4, 4][tier], maxS = tier < 2 ? 3 : 4;
-  const CS = N === 3 ? 40 : 32, GX = 20, GY = 30;
-  const owner = new Array(N * N).fill(-1);
-  const pieces = [];
-  const order = [...Array(N * N).keys()].sort(() => Math.random() - 0.5);
-  for (const start of order) {
-    if (owner[start] !== -1) continue;
-    const id = pieces.length, cells = [start]; owner[start] = id;
-    const size = randi(1, maxS);
-    while (cells.length < size) {
-      const opts = [];
-      for (const c of cells) {
-        const cx = c % N, cy = (c / N) | 0;
-        for (const [dx, dy] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
-          const nx = cx + dx, ny = cy + dy;
-          if (nx >= 0 && ny >= 0 && nx < N && ny < N && owner[ny * N + nx] === -1) opts.push(ny * N + nx);
-        }
-      }
-      if (!opts.length) break;
-      const n = opts[randi(0, opts.length - 1)]; owner[n] = id; cells.push(n);
+// ---- 포장: 포장 기계 배선 퍼즐 (같은 색 단자 잇기) ----
+const WCOL = [
+  { c: '#ff4d4d', d: '#a82424' }, { c: '#3fa9ff', d: '#1d5f9e' }, { c: '#4fdc6a', d: '#24823a' },
+  { c: '#ffd23f', d: '#a8821a' }, { c: '#c26bff', d: '#6f2fa8' },
+];
+// 격자를 빈틈없이 덮는 무작위 해밀턴 경로 (backbite 알고리즘)
+function hamPath(N) {
+  let path = [];
+  for (let y = 0; y < N; y++) for (let x = 0; x < N; x++) path.push([y % 2 ? N - 1 - x : x, y]);
+  const idx = (c) => path.findIndex((q) => q[0] === c[0] && q[1] === c[1]);
+  for (let it = 0; it < N * N * 30; it++) {
+    if (Math.random() < 0.5) path.reverse();
+    const e = path[path.length - 1];
+    const nb = [[1, 0], [-1, 0], [0, 1], [0, -1]].map(([dx, dy]) => [e[0] + dx, e[1] + dy]).filter(([x, y]) => x >= 0 && y >= 0 && x < N && y < N);
+    const n = nb[Math.floor(Math.random() * nb.length)];
+    const i = idx(n);
+    if (i === path.length - 2) continue;
+    path = path.slice(0, i + 1).concat(path.slice(i + 1).reverse());
+  }
+  return path;
+}
+function makeWirePuzzle(N, K) {
+  for (let tries = 0; tries < 60; tries++) {
+    const path = hamPath(N);
+    const total = N * N;
+    // K개 구간으로 자르기 (각 3칸 이상)
+    const cuts = [];
+    let ok = true;
+    let start = 0;
+    for (let k = 0; k < K - 1; k++) {
+      const remain = total - start, left = K - k;
+      const avg = remain / left;
+      const len = Math.max(3, Math.min(remain - 3 * (left - 1), Math.round(avg + (Math.random() - 0.5) * avg * 0.6)));
+      cuts.push([start, start + len - 1]);
+      start += len;
     }
-    const xs = cells.map((c) => c % N), ys = cells.map((c) => (c / N) | 0);
-    const mx = Math.min(...xs), my = Math.min(...ys);
-    pieces.push({ id, cells: cells.map((c) => ({ x: (c % N) - mx, y: ((c / N) | 0) - my })), w: Math.max(...xs) - mx + 1, h: Math.max(...ys) - my + 1, color: PCOL[id % PCOL.length], placed: null, tx: 0, ty: 0 });
+    cuts.push([start, total - 1]);
+    if (total - start < 3) ok = false;
+    const pairs = cuts.map(([a, b]) => [path[a], path[b]]);
+    pairs.sol = cuts.map(([a, b]) => path.slice(a, b + 1));
+    // 양 끝이 바로 붙어 있는 너무 쉬운 선은 다시 만들기
+    if (pairs.some(([a, b]) => Math.abs(a[0] - b[0]) + Math.abs(a[1] - b[1]) <= 1)) ok = false;
+    if (ok) return pairs;
   }
-  // 트레이 배치
-  const TS = 14, TX0 = GX + N * CS + 18;
-  let tx = TX0, ty = 30, rowH = 0;
-  for (const p of pieces.sort(() => Math.random() - 0.5)) {
-    if (tx + p.w * TS > LW - 6) { tx = TX0; ty += rowH + 8; rowH = 0; }
-    p.tx = tx; p.ty = ty; tx += p.w * TS + 8; rowH = Math.max(rowH, p.h * TS);
-  }
-  const grid = new Array(N * N).fill(-1);
+  return null;
+}
+function gWire(tier) {
+  const N = [4, 4, 5, 5, 6][tier], K = [3, 3, 4, 4, 5][tier];
+  const pairs = makeWirePuzzle(N, K) || makeWirePuzzle(N, K);
+  const GX = 12, GY = 12, GS = 200, CS = GS / N;
+  const dots = new Map(); // 칸 번호 → 색
+  pairs.forEach(([a, b], c) => { dots.set(a[1] * N + a[0], c); dots.set(b[1] * N + b[0], c); });
+  const paths = pairs.map(() => []);
+  const owner = new Int8Array(N * N).fill(-1);
+  const done = new Array(K).fill(false);
+  let drag = null, downCell = -1, moved = false, winT = -1, lastSnd = 0;
+  const cx = (i) => GX + (i % N) * CS + CS / 2, cy = (i) => GY + Math.floor(i / N) * CS + CS / 2;
+  const setPath = (c, arr) => {
+    for (const i of paths[c]) if (owner[i] === c) owner[i] = -1;
+    paths[c] = arr;
+    for (const i of arr) owner[i] = c;
+    const p = arr; done[c] = p.length > 1 && dots.get(p[p.length - 1]) === c && p[p.length - 1] !== p[0];
+  };
+  // 포인터 근처 칸 (보정: 칸 크기 70% 이내면 잡힘)
+  const cellNear = (pt, tol = 0.7) => {
+    const gx = (pt.x - GX) / CS, gy = (pt.y - GY) / CS;
+    const ix = Math.floor(gx), iy = Math.floor(gy);
+    let best = -1, bd = 1e9;
+    for (let y = iy - 1; y <= iy + 1; y++) for (let x = ix - 1; x <= ix + 1; x++) {
+      if (x < 0 || y < 0 || x >= N || y >= N) continue;
+      const d = Math.hypot(gx - (x + 0.5), gy - (y + 0.5));
+      if (d < bd) { bd = d; best = y * N + x; }
+    }
+    return bd <= tol + 0.5 ? best : -1;
+  };
+  const step = (c, next) => {
+    const p = paths[c];
+    const last = p[p.length - 1];
+    const lx = last % N, ly = Math.floor(last / N), nx = next % N, ny = Math.floor(next / N);
+    if (Math.abs(lx - nx) + Math.abs(ly - ny) !== 1) return false;
+    if (p.length >= 2 && next === p[p.length - 2]) { setPath(c, p.slice(0, -1)); return true; } // 되돌아가기
+    const own = p.indexOf(next);
+    if (own >= 0) { setPath(c, p.slice(0, own + 1)); return true; }
+    if (done[c]) return false;
+    const dc = dots.get(next);
+    if (dc !== undefined && dc !== c) return false;
+    if (dc === c && next === p[0]) return false;
+    const o = owner[next];
+    if (o >= 0 && o !== c) { // 다른 선을 지나가면 그 선이 끊김
+      const q = paths[o]; const k = q.indexOf(next);
+      setPath(o, q.slice(0, Math.max(1, k)));
+      audio.sfx('fail');
+    }
+    setPath(c, p.concat([next]));
+    if (done[c]) audio.sfx('ok');
+    else if (g.t - lastSnd > 0.05) { lastSnd = g.t; audio.sfx('click'); }
+    return true;
+  };
   const g = {
-    t: 0, limit: [16, 16, 20, 20, 22][tier], drag: null,
+    t: 0, limit: [20, 20, 25, 25, 30][tier], lw: 300, lh: 224, sol: pairs.sol, geo: { GX, GY, CS, N },
     down(pt) {
-      // 상자 위 조각 다시 집기
-      const gx = Math.floor((pt.x - GX) / CS), gy = Math.floor((pt.y - GY) / CS);
-      if (gx >= 0 && gy >= 0 && gx < N && gy < N && grid[gy * N + gx] >= 0) {
-        const p = pieces.find((q) => q.id === grid[gy * N + gx]);
-        for (let i = 0; i < grid.length; i++) if (grid[i] === p.id) grid[i] = -1;
-        g.drag = { p, ox: gx - p.placed.x, oy: gy - p.placed.y, x: pt.x, y: pt.y };
-        p.placed = null;
-        return;
-      }
-      for (const p of pieces) {
-        if (p.placed) continue;
-        for (const c of p.cells) {
-          const x0 = p.tx + c.x * TS, y0 = p.ty + c.y * TS;
-          if (pt.x >= x0 - 3 && pt.x < x0 + TS + 3 && pt.y >= y0 - 3 && pt.y < y0 + TS + 3) { g.drag = { p, ox: c.x, oy: c.y, x: pt.x, y: pt.y }; audio.sfx('click'); return; }
-        }
+      if (winT >= 0) return;
+      const cell = cellNear(pt);
+      if (cell < 0) return;
+      downCell = cell; moved = false;
+      const dc = dots.get(cell);
+      if (dc !== undefined) { setPath(dc, [cell]); drag = { c: dc }; audio.sfx('click'); return; }
+      const o = owner[cell];
+      if (o >= 0) { const k = paths[o].indexOf(cell); setPath(o, paths[o].slice(0, k + 1)); drag = { c: o }; }
+    },
+    move(pt) {
+      if (!drag) return;
+      const c = drag.c;
+      // 칸 경계 흔들림 방지 + 빠른 드래그 보간
+      for (let guard = 0; guard < N * 2; guard++) {
+        const p = paths[c]; const cur = p[p.length - 1];
+        const fx = (pt.x - GX) / CS - ((cur % N) + 0.5), fy = (pt.y - GY) / CS - (Math.floor(cur / N) + 0.5);
+        if (Math.abs(fx) < 0.62 && Math.abs(fy) < 0.62) break;
+        let nx = cur % N, ny = Math.floor(cur / N);
+        if (Math.abs(fx) >= Math.abs(fy)) nx += Math.sign(fx); else ny += Math.sign(fy);
+        if (nx < 0 || ny < 0 || nx >= N || ny >= N) break;
+        moved = true;
+        if (!step(c, ny * N + nx)) break;
       }
     },
-    move(pt) { if (g.drag) { g.drag.x = pt.x; g.drag.y = pt.y; } },
-    up(pt) {
-      if (!g.drag) return;
-      const { p, ox, oy } = g.drag;
-      g.drag = null;
-      const bx = Math.floor((pt.x - GX) / CS) - ox, by = Math.floor((pt.y - GY) / CS) - oy;
-      const ok = p.cells.every((c) => { const x = bx + c.x, y = by + c.y; return x >= 0 && y >= 0 && x < N && y < N && grid[y * N + x] === -1; });
-      if (ok) {
-        for (const c of p.cells) grid[(by + c.y) * N + bx + c.x] = p.id;
-        p.placed = { x: bx, y: by };
-        audio.sfx('box');
-        if (grid.every((v) => v >= 0)) g.finish('ok');
-      }
+    up() {
+      if (!drag) return;
+      drag = null;
+      if (done.every(Boolean)) { winT = 0; audio.sfx('upgrade'); }
+    },
+    update(dt) {
+      if (winT >= 0) { winT += dt; if (winT > 1.1) g.finish('ok'); }
     },
     draw(ctx) {
-      bgPanel(ctx, '#3d4a35', '#262f22');
-      ctx.fillStyle = '#2a1d10'; ctx.fillRect(GX - 4, GY - 4, N * CS + 8, N * CS + 8);
-      ctx.fillStyle = '#c99858'; ctx.fillRect(GX - 2, GY - 2, N * CS + 4, N * CS + 4);
-      for (let y = 0; y < N; y++) for (let x = 0; x < N; x++) {
-        ctx.fillStyle = (x + y) % 2 ? '#a77a40' : '#b0844a'; ctx.fillRect(GX + x * CS + 1, GY + y * CS + 1, CS - 2, CS - 2);
+      // 제어판 배경 (픽셀 금속판)
+      ctx.fillStyle = '#2a313d'; ctx.fillRect(0, 0, g.lw, g.lh);
+      ctx.fillStyle = '#323a48'; for (let y = 0; y < g.lh; y += 8) ctx.fillRect(0, y, g.lw, 1);
+      ctx.fillStyle = '#596476'; [[4, 4], [g.lw - 7, 4], [4, g.lh - 7], [g.lw - 7, g.lh - 7]].forEach(([a, b]) => ctx.fillRect(a, b, 3, 3));
+      // 격자 슬롯
+      ctx.fillStyle = '#10141c'; ctx.fillRect(GX - 4, GY - 4, GS + 8, GS + 8);
+      for (let i = 0; i < N * N; i++) {
+        const x = GX + (i % N) * CS, y = GY + Math.floor(i / N) * CS;
+        ctx.fillStyle = '#1b2230'; ctx.fillRect(x + 1, y + 1, CS - 2, CS - 2);
+        ctx.fillStyle = '#232c3c'; ctx.fillRect(x + 1, y + 1, CS - 2, 1);
+        if (owner[i] >= 0) { ctx.fillStyle = WCOL[owner[i]].c; ctx.globalAlpha = done[owner[i]] ? 0.22 : 0.12; ctx.fillRect(x + 1, y + 1, CS - 2, CS - 2); ctx.globalAlpha = 1; }
       }
-      const cell = (x, y, s, col) => {
-        ctx.fillStyle = '#1b1b1b'; ctx.fillRect(x, y, s, s);
-        ctx.fillStyle = col; ctx.fillRect(x + 1, y + 1, s - 2, s - 2);
-        ctx.fillStyle = 'rgba(255,255,255,0.35)'; ctx.fillRect(x + 2, y + 2, s - 4, 2);
-      };
-      for (const p of pieces) {
-        if (p.placed) for (const c of p.cells) cell(GX + (p.placed.x + c.x) * CS + 1, GY + (p.placed.y + c.y) * CS + 1, CS - 2, p.color);
-        else if (!g.drag || g.drag.p !== p) for (const c of p.cells) cell(p.tx + c.x * TS, p.ty + c.y * TS, TS, p.color);
+      // 전선
+      const ww = Math.max(4, Math.round(CS * 0.32));
+      paths.forEach((p, c) => {
+        for (let k = 0; k < p.length; k++) {
+          const a = p[k], b = p[k + 1] !== undefined ? p[k + 1] : a;
+          const x0 = Math.min(cx(a), cx(b)) - ww / 2, y0 = Math.min(cy(a), cy(b)) - ww / 2;
+          const w = Math.abs(cx(a) - cx(b)) + ww, h = Math.abs(cy(a) - cy(b)) + ww;
+          ctx.fillStyle = 'rgba(0,0,0,0.45)'; ctx.fillRect(Math.round(x0) + 2, Math.round(y0) + 2, Math.round(w), Math.round(h));
+          ctx.fillStyle = WCOL[c].d; ctx.fillRect(Math.round(x0), Math.round(y0), Math.round(w), Math.round(h));
+          ctx.fillStyle = WCOL[c].c; ctx.fillRect(Math.round(x0) + 1, Math.round(y0) + 1, Math.round(w) - 2, Math.round(h) - 2);
+          ctx.fillStyle = 'rgba(255,255,255,0.35)'; ctx.fillRect(Math.round(x0) + 1, Math.round(y0) + 1, Math.round(w) - 2, 1);
+        }
+      });
+      // 단자 (숫자 = 색맹 보조)
+      const ds = Math.round(CS * 0.6);
+      for (const [i, c] of dots) {
+        const x = Math.round(cx(i) - ds / 2), y = Math.round(cy(i) - ds / 2);
+        const glow = done[c] && Math.floor(g.t * 4) % 2;
+        ctx.fillStyle = '#0b0e14'; ctx.fillRect(x - 2, y - 2, ds + 4, ds + 4);
+        ctx.fillStyle = '#9aa7b6'; ctx.fillRect(x - 1, y - 1, ds + 2, ds + 2);
+        ctx.fillStyle = WCOL[c].d; ctx.fillRect(x, y, ds, ds);
+        ctx.fillStyle = glow ? '#ffffff' : WCOL[c].c; ctx.fillRect(x + 2, y + 2, ds - 4, ds - 4);
+        ctx.fillStyle = 'rgba(255,255,255,0.4)'; ctx.fillRect(x + 2, y + 2, ds - 4, 2);
+        ctx.font = `bold ${Math.round(ds * 0.62)}px Galmuri11, sans-serif`; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+        ctx.fillStyle = '#111'; ctx.fillText(String(c + 1), cx(i) + 1, cy(i) + 2);
+        ctx.fillStyle = '#fff'; ctx.fillText(String(c + 1), cx(i), cy(i) + 1);
       }
-      if (g.drag) {
-        const { p, ox, oy, x, y } = g.drag;
-        ctx.globalAlpha = 0.85;
-        for (const c of p.cells) cell(x + (c.x - ox - 0.5) * CS, y + (c.y - oy - 0.5) * CS, CS - 2, p.color);
-        ctx.globalAlpha = 1;
+      ctx.textBaseline = 'alphabetic';
+      // 오른쪽: 포장 기계 상태
+      const PX = GX + GS + 14, PW = g.lw - PX - 8;
+      ctx.fillStyle = '#1b2230'; ctx.fillRect(PX, GY - 4, PW, GS + 8);
+      text(ctx, '포장 기계', PX + PW / 2, GY + 12, 11, '#ffe066');
+      for (let c = 0; c < K; c++) {
+        const ly = GY + 26 + c * 18, on = done[c];
+        ctx.fillStyle = '#0b0e14'; ctx.fillRect(PX + 10, ly, 14, 12);
+        ctx.fillStyle = on ? WCOL[c].c : '#3a2020'; ctx.fillRect(PX + 11, ly + 1, 12, 10);
+        if (on) { ctx.fillStyle = 'rgba(255,255,255,0.5)'; ctx.fillRect(PX + 12, ly + 2, 4, 2); }
+        text(ctx, String(c + 1), PX + 36, ly + 10, 10, on ? '#fff' : '#667', 'left');
       }
-      text(ctx, '조각', GX + N * CS + 18, 22, 11, '#dfe', 'left');
+      // 상자 (성공하면 접히고 테이프)
+      const bx = PX + PW / 2 - 18, by = GY + GS - 46;
+      const k = winT >= 0 ? Math.min(1, winT / 0.7) : 0;
+      ctx.fillStyle = '#5a3c1e'; ctx.fillRect(bx - 1, by - 1, 38, 32);
+      ctx.fillStyle = '#c99858'; ctx.fillRect(bx, by, 36, 30);
+      ctx.fillStyle = '#a77a40'; ctx.fillRect(bx, by, 36, 6);
+      if (k > 0) {
+        ctx.fillStyle = '#d6a868'; ctx.fillRect(bx, by - 10 + k * 10, 18, 8 * (1 - k) + 6); ctx.fillRect(bx + 18, by - 10 + k * 10, 18, 8 * (1 - k) + 6);
+        if (k >= 1) { ctx.fillStyle = '#e6c88c'; ctx.fillRect(bx + 15, by, 6, 30); }
+      }
+      if (winT >= 0) { const sh = Math.sin(g.t * 40) * 1.5; ctx.fillStyle = 'rgba(255,224,102,0.25)'; ctx.fillRect(PX + sh, GY - 4, PW, GS + 8); }
+      text(ctx, `${done.filter(Boolean).length} / ${K}`, PX + PW / 2, by - 16, 12, '#fff');
     },
   };
   return g;

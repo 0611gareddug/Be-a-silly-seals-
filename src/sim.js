@@ -2,10 +2,11 @@
 import {
   TILE, FISH, UNLOCK, autoRate, fishValue, upCost, MAX_LV, TOYS, SABS, SAB_IMMUNE, STRESS_PER_SEC,
   CCTV_WINDOW, CCTV_WINDOW_CONSOLE, PILLOW_WAKE, COOP_TARGET, DAY_NAMES, DAY_LEN,
-  STATIONS, STATION_BY_ID, SPAWN, CAT_DOOR, buildSolid, stationPoint, FACE,
+  STATIONS, STATION_BY_ID, SPAWN, CAT_DOOR, buildSolid, stationPoint, FACE, MAP_W, MAP_H,
 } from './data.js';
 import { rand, randi, pick, clamp, distToStation, fmt } from './util.js';
 import { botThink, botMove } from './bots.js';
+import { line } from './lines.js';
 
 const NEAR = 30; // 상호작용 허용 거리(여유 포함)
 const toyById = (id) => TOYS.find((t) => t.id === id);
@@ -51,15 +52,9 @@ export class Sim {
       zones: [0, 1, 2, 3, 4].map((z) => ({ u: z === 0, lv: 1, br: false, acc: 0, popT: rand(1, 3) })),
       orders: [], orderT: 3, nextOid: 1, cats: [], nextCat: 1, slip: 0,
       cctv: { next: rand(45, 75), active: false, t: 0, checked: {} },
-      ev: [], day: 0, target: 0, dayEarned: 0, solidKey: '', solid: null,
+      ev: [], day: 0, target: 0, dayEarned: 0, solid: buildSolid(), shipped: 0, missStreak: 0, nagT: 25,
     };
-    this.refreshSolid(f);
     return f;
-  }
-
-  refreshSolid(f) {
-    const key = f.zones.map((z) => (z.u ? 1 : 0)).join('');
-    if (key !== f.solidKey) { f.solidKey = key; f.solid = buildSolid(f.zones.map((z) => z.u)); }
   }
 
   // ---------- 이벤트 ----------
@@ -102,8 +97,8 @@ export class Sim {
       this.countT -= dt;
       if (this.countT <= 0) {
         this.phase = 'play';
-        if (this.mode === 'vs') this.sayAll('오늘도 물고기는 넘쳐나고 월급은 모자라다. 일해라, 물범들!');
-        else if (this.coop) this.sayAll(`${this.dayName(1)}이다. 목표 실적 ${fmt(this.factories[0].target)}! 다 같이 채워라!`);
+        if (this.mode === 'vs') this.sayAll(line('start'), FACE.happy);
+        else if (this.coop) this.sayAll(line('coopStart', { d: this.dayName(1), m: fmt(this.factories[0].target) }), FACE.happy);
         this.ev.push(['sfx', 'start']);
       }
       return;
@@ -116,8 +111,8 @@ export class Sim {
         const f = this.factories[0];
         this.startDay(f.day + 1);
         const d = f.day;
-        this.sayAll(d === 5 ? `금요일이다! 대형 주문이 들어왔다. ${FISH[f.orders[0].t].name} ${f.orders[0].q}마리! 힘을 합쳐라!`
-          : `${this.dayName(d)}이다. 목표 실적 ${fmt(f.target)}!`, d === 5 ? FACE.shock : FACE.normal);
+        this.sayAll(d === 5 ? line('friday', { f: FISH[f.orders[0].t].name, q: f.orders[0].q })
+          : line('coopStart', { d: this.dayName(d), m: fmt(f.target) }), d === 5 ? FACE.shock : FACE.happy);
       }
       return;
     }
@@ -131,7 +126,7 @@ export class Sim {
 
     // 종료 판정
     if (this.mode === 'vs') {
-      if (!this.said2 && this.timeLeft <= 120) { this.said2 = true; this.sayAll('마감 2분 전이다! 서둘러라!', FACE.angry); this.ev.push(['bgm', 'rush']); }
+      if (!this.said2 && this.timeLeft <= 120) { this.said2 = true; this.sayAll(line('rush'), FACE.shock); this.ev.push(['bgm', 'rush']); }
       const alive = [...this.players.values()].filter((p) => !p.fired);
       if (this.timeLeft <= 0 || alive.length === 0 || (this.players.size > 1 && alive.length <= 1)) this.endVs();
     } else if (this.coop) {
@@ -144,7 +139,7 @@ export class Sim {
           this.phase = 'dayend'; this.dayEndT = 5;
           this.ev.push(['day', f.day, 1, Math.floor(f.dayEarned), f.target]);
           this.ev.push(['bgm', 'factory']);
-          this.sayAll(`${this.dayName(f.day)} 목표 달성! 잘했다, 물범들.`, FACE.happy);
+          this.sayAll(line('dayClear', { d: this.dayName(f.day) }), FACE.happy);
         } else this.endCoop(false);
       }
     }
@@ -170,7 +165,10 @@ export class Sim {
       o.tl -= dt;
       if (o.tl <= 0) {
         f.orders.splice(k, 1);
-        this.sayF(f, `${FISH[o.t].name} 주문을 놓쳤다! 손님이 화났다!`, FACE.angry);
+        f.missStreak++;
+        for (const q of players) q.streak = 0;
+        if (f.missStreak >= 2 && f.missStreak % 2 === 0) this.sayF(f, line('nagMiss'), FACE.shock);
+        else this.sayF(f, line('orderMiss', { f: FISH[o.t].name }), FACE.shock);
         this.sfxF(f, 'fail');
         for (const p of players) if (!p.fired && p.out <= 0) this.addStress(p, this.coop ? 8 : 15);
       }
@@ -187,7 +185,7 @@ export class Sim {
         const q = this.coop ? randi(1, 2 + Math.floor(n / 2)) : randi(1, 3);
         const tt = 45 + 25 * q + 8 * t + (this.coop ? 10 : 0);
         f.orders.push({ id: f.nextOid++, t, q, d: 0, tl: tt, tt, boss: false });
-        this.sayF(f, `${FISH[t].name} ${q}마리 주문 들어왔다! ${Math.round(tt)}초 안에 출하해!`);
+        this.sayF(f, line('order', { f: FISH[t].name, q, s: Math.round(tt) }));
         this.sfxF(f, 'order');
       }
     }
@@ -201,7 +199,7 @@ export class Sim {
           c.x = tx; c.y = ty;
           if (c.st === 'flee') { f.cats.splice(k, 1); continue; }
           c.st = 'eat'; c.eatT = 1.5;
-          this.noteF(f, `🐱 고양이가 ${FISH[c.z].name} 수조를 노린다! 부딪혀서 쫓아내!`);
+          this.noteF(f, line('catNote', { f: FISH[c.z].name }));
         } else { c.x += dx / d * sp; c.y += dy / d * sp; c.dir = dx > 0 ? 1 : -1; }
       } else if (c.st === 'eat') {
         c.eatT -= dt;
@@ -228,7 +226,7 @@ export class Sim {
   startCctv(f) {
     const cc = f.cctv;
     cc.active = true; cc.t = 0; cc.checked = {};
-    this.sayF(f, '지금부터… CCTV를 확인하겠다.', FACE.angry);
+    this.sayF(f, line('cctv'), FACE.angry);
     f.ev.push(['cctv', 1]);
     this.sfxF(f, 'siren');
   }
@@ -244,7 +242,7 @@ export class Sim {
           const toy = toyById(p.toy);
           p.stats.caught++;
           p.toy = 0; p.waking = 0;
-          this.warn(p, `${p.name}! 근무 중에 ${toy ? toy.name : '딴짓'}이라니!`);
+          this.warn(p, line('warnToy', { n: p.name, t: toy ? toy.name : '딴짓' }));
           p.ev.push(['cctv', 3]);
         } else p.ev.push(['cctv', 2]);
       }
@@ -258,6 +256,10 @@ export class Sim {
   }
 
   updatePlayer(p, dt) {
+    if (!p.bot && !this.tut && this.phase === 'play' && !p.fired && p.out <= 0) {
+      p.idleT = (p.idleT || 0) + dt;
+      if (p.idleT > 35 && !p.toy) { p.idleT = 0; this.sayP(p, line('nagIdle', { n: p.name }), FACE.shock); }
+    }
     if (p.emoteT > 0) { p.emoteT -= dt; if (p.emoteT <= 0) p.emote = -1; }
     if (p.immune > 0) p.immune -= dt;
     if (p.hack > 0) p.hack -= dt;
@@ -267,7 +269,7 @@ export class Sim {
       p.out -= dt;
       if (p.out <= 0) {
         p.x = SPAWN.x; p.y = SPAWN.y; p.ev.push(['tp', p.x, p.y]);
-        this.sayF(this.fp(p), `${p.name}, 다시 일해라. 이번엔 잘해라.`);
+        this.sayF(this.fp(p), line('back', { n: p.name }), FACE.happy);
       }
       return;
     }
@@ -281,7 +283,7 @@ export class Sim {
       p.stress = 50; p.faint = 3; p.toy = 0; p.waking = 0;
       p.ev.push(['faint']);
       this.sfxF(this.fp(p), 'faint');
-      this.warn(p, `${p.name}! 스트레스로 쓰러지다니, 정신 차려라!`);
+      this.warn(p, line('warnStress', { n: p.name }));
     }
     // 봇끼리/플레이어 밀치기 (봇만 호스트가 처리)
     if (p.bot) {
@@ -303,11 +305,11 @@ export class Sim {
   }
   catOn(f, z) { return f.cats.some((c) => c.st === 'eat' && c.z === z); }
 
-  warn(p, line) {
+  warn(p, msg) {
     if (p.fired) return;
     p.warn++;
     const f = this.fp(p);
-    this.sayF(f, `${line} 경고 ${p.warn}회다!`, FACE.angry);
+    this.sayF(f, `${msg} 경고 ${p.warn}회다!`, FACE.angry);
     p.ev.push(['warn', p.warn]);
     this.sfxF(f, 'stamp');
     if (p.warn >= 3) this.fire(p);
@@ -318,15 +320,15 @@ export class Sim {
     if (this.coop) {
       p.out = 30; p.warn = 0;
       f.dayEarned -= 1000;
-      this.sayAll(`${p.name}… 30초 동안 반성문이나 써라! 팀 실적 -1,000!`, FACE.angry);
+      this.sayAll(line('fireCoop', { n: p.name }), FACE.angry);
       p.ev.push(['fired', 0]);
     } else if (this.mode === 'vs') {
       p.fired = true; p.firedAt = this.time;
-      this.sayAll(`${p.name}… 내일부터 안 나와도 된다.`, FACE.angry);
+      this.sayAll(line('fire', { n: p.name }), FACE.angry);
       p.ev.push(['fired', 1]);
       this.ev.push(['sfx', 'stamp']);
     } else {
-      p.warn = 0; this.sayP(p, '튜토리얼이니까 봐준다. 경고 초기화!');
+      p.warn = 0; this.sayP(p, '튜토리얼이니까 이번만 봐줄게요. 경고 초기화!', FACE.happy);
     }
   }
 
@@ -339,9 +341,11 @@ export class Sim {
       case 'p': {
         if (p.bot || p.fired || p.out > 0) return;
         if (typeof m.x !== 'number' || typeof m.y !== 'number') return;
-        p.x = clamp(m.x, 16, 47 * TILE); p.y = clamp(m.y, 16, 29 * TILE); p.dir = m.d > 0 ? 1 : -1; p.mv = m.m ? 1 : 0;
+        if (Math.abs(m.x - p.x) + Math.abs(m.y - p.y) > 2) p.idleT = 0;
+        p.x = clamp(m.x, 16, (MAP_W - 1) * TILE); p.y = clamp(m.y, 16, (MAP_H - 1) * TILE); p.dir = m.d > 0 ? 1 : -1; p.mv = m.m ? 1 : 0;
         return;
       }
+      case 'work': p.work = typeof m.s === 'string' ? m.s.slice(0, 8) : null; return;
       case 'emote': if (m.e >= 0 && m.e < 4 && !p.fired) { p.emote = m.e; p.emoteT = 2.5; } return;
       case 'view': if (p.fired && this.factories[m.fi]) p.view = m.fi; return;
       case 'toy': return this.toggleToy(p, m.on, m.id);
@@ -350,6 +354,7 @@ export class Sim {
       default: return;
     }
     if (this.phase !== 'play' || !this.canAct(p)) return;
+    p.idleT = 0;
     const near = (id) => distToStation(p.x, p.y, STATION_BY_ID[id]) <= NEAR;
     const nearKind = (k) => STATIONS.some((s) => s.kind === k && distToStation(p.x, p.y, s) <= NEAR);
     switch (m.k) {
@@ -367,11 +372,11 @@ export class Sim {
       case 'drop': if (p.hold) { p.hold = null; this.sfxP(p, 'drop'); } return;
       case 'fix': {
         const zz = f.zones[m.z | 0];
-        if (zz && zz.br && near('mach' + (m.z | 0))) { zz.br = false; this.sayF(f, `${p.name}가 기계를 고쳤다. 좋아!`, FACE.happy); this.sfxF(f, 'fix'); }
+        if (zz && zz.br && near('mach' + (m.z | 0))) { zz.br = false; this.sayF(f, line('fixed', { n: p.name }), FACE.happy); this.sfxF(f, 'fix'); }
         return;
       }
-      case 'unhack': if (p.hack > 0 && near('pc')) { p.hack = 0; this.sfxP(p, 'fix'); this.sayP(p, '재부팅 완료. 해커 녀석들…'); } return;
-      case 'mop': if (f.slip > 0 && near('mop')) { f.slip = 0; this.sayF(f, '바닥이 깨끗해졌다!', FACE.happy); this.sfxF(f, 'fix'); } return;
+      case 'unhack': if (p.hack > 0 && near('pc')) { p.hack = 0; this.sfxP(p, 'fix'); this.sayP(p, line('unhack'), FACE.happy); } return;
+      case 'mop': if (f.slip > 0 && near('mop')) { f.slip = 0; this.sayF(f, line('mopped'), FACE.happy); this.sfxF(f, 'fix'); } return;
       case 'fail': this.addStress(p, 5); this.sfxP(p, 'fail'); return;
       case 'bumpcat': return this.bumpCat(p, m.id);
     }
@@ -408,7 +413,7 @@ export class Sim {
     p.stats.fish++;
     const o = f.orders.filter((o) => o.t === t && o.d < o.q).sort((a, b) => a.tl - b.tl)[0];
     const truck = STATION_BY_ID.truck;
-    const tx = (truck.x + 2.5) * TILE, ty = truck.y * TILE;
+    const tx = (truck.x + truck.w / 2) * TILE, ty = truck.y * TILE;
     if (o) {
       o.d++;
       if (o.d >= o.q) {
@@ -418,7 +423,10 @@ export class Sim {
         p.stats.orders++;
         this.fx(f, tx, ty, '+' + fmt(reward), '#7dff8a');
         this.sfxF(f, 'horn');
-        this.sayF(f, o.boss ? '대형 주문 완료! 역시 내 물범들이다!' : pick(['주문 완료! 좋아, 이 맛에 사장 한다.', '출하 완료! 다음 주문 받아라.', '훌륭하다. 월급 루팡은 아니군.']), FACE.happy);
+        f.missStreak = 0;
+        p.streak = (p.streak || 0) + 1;
+        if (p.streak >= 3 && p.streak % 3 === 0) this.sayF(f, line('streak', { n: p.name }), FACE.happy);
+        else this.sayF(f, line(o.boss ? 'bossDone' : 'orderDone'), FACE.happy);
       } else {
         this.fx(f, tx, ty, `${o.d}/${o.q}`, '#fff');
         this.sfxF(f, 'box');
@@ -429,7 +437,9 @@ export class Sim {
       this.fx(f, tx, ty, '+' + fmt(v), '#ffe066');
       this.sfxF(f, 'coin');
     }
-    if (t === 4 && this.mode === 'vs') this.noteAll(`✨ ${p.name}가 황금물고기를 출하했다!`);
+    f.shipped++;
+    f.ev.push(['ship']);
+    if (t === 4) { this.sayF(f, line('gold', { n: p.name }), FACE.happy); if (this.mode === 'vs') this.noteAll(`✨ ${p.name}님이 황금물고기를 출하했어요!`); }
     if (this.tut) this.tut.flag = 'ship';
   }
 
@@ -443,10 +453,9 @@ export class Sim {
       if (z < 1 || z > 4 || f.zones[z].u || !f.zones[z - 1].u) return;
       if (!pay(UNLOCK[z])) return;
       f.zones[z].u = true; (f.unlockT = f.unlockT || []).push(this.time);
-      this.refreshSolid(f);
       f.ev.push(['unlock', z]);
       this.sfxF(f, 'unlock');
-      this.sayF(f, z === 4 ? '황금물고기 구역이 열렸다! 전설의 물고기를 잡아라!' : `${FISH[z].name} 라인이 열렸다. ${z >= 3 ? '비싼 놈이니 떨어뜨리지 마라.' : '열심히 해라.'}`, FACE.happy);
+      this.sayF(f, z === 4 ? line('unlockGold') : line('unlock', { f: FISH[z].name }), FACE.happy);
     } else if (m.k === 'up') {
       const z = m.z | 0; const zz = f.zones[z];
       if (!zz || !zz.u || zz.lv >= MAX_LV) return;
@@ -465,7 +474,7 @@ export class Sim {
       const s = SABS.find((s) => s.id === m.s);
       const q = this.players.get(m.target);
       if (!s || !q || q === p || q.fired || q.left) return;
-      if (q.immune > 0) { this.sayP(p, `${q.name}는 아직 방해 면역이다.`); return; }
+      if (q.immune > 0) { this.sayP(p, line('sabImmune', { n: q.name })); return; }
       if (!pay(s.price)) return;
       this.sabotage(p, q, s);
     }
@@ -479,7 +488,7 @@ export class Sim {
       const un = tf.zones.map((z, i) => (z.u ? i : -1)).filter((i) => i >= 0);
       for (let k = 0; k < 2; k++) {
         const z = pick(un), t = STATION_BY_ID['tank' + z];
-        tf.cats.push({ id: tf.nextCat++, x: CAT_DOOR.x, y: CAT_DOOR.y + k * 12, tx: (t.x + 1 + k * 2) * TILE, ty: (t.y + t.h) * TILE + 6, z, st: 'walk', hits: 0, hitCd: 0, dir: 1, eatT: 0 });
+        tf.cats.push({ id: tf.nextCat++, x: CAT_DOOR.x, y: CAT_DOOR.y + k * 12, tx: stationPoint(t).x + (k ? 14 : -14), ty: stationPoint(t).y, z, st: 'walk', hits: 0, hitCd: 0, dir: 1, eatT: 0 });
       }
     } else if (s.id === 'slip') tf.slip = 15;
     else if (s.id === 'hack') q.hack = 8;
@@ -490,7 +499,7 @@ export class Sim {
     this.addStress(q, 10);
     this.noteF(tf, `${s.icon} ${p.name}님이 ${s.name}을(를) 걸었다!`);
     this.sfxF(tf, 'sabotage');
-    this.sayP(p, `${q.name}에게 ${s.name} 성공. …나는 아무것도 못 봤다.`);
+    this.sayP(p, line('sabOk', { n: q.name }), FACE.happy);
   }
 
   // ---------- 종료 ----------
@@ -505,7 +514,7 @@ export class Sim {
       rank: rank.map((p, i) => ({ id: p.id, name: p.name, look: p.look, bot: p.bot, rank: i + 1, earned: Math.floor(this.factories[p.fi].earned), fired: p.fired, warn: p.warn, stats: p.stats })),
     };
     const best = rank[0];
-    this.sayAll(best ? `이번 달 우수 사원은… ${best.name}!` : '오늘은 다 해고다!', FACE.happy);
+    this.sayAll(best && !best.fired ? line('winner', { n: best.name }) : line('allFired'), FACE.happy);
   }
   endCoop(cleared) {
     this.phase = 'end';
@@ -515,14 +524,14 @@ export class Sim {
       mode: this.mode, cleared, day: f.day, daysCleared, total: Math.floor(f.earned), dayEarned: Math.floor(f.dayEarned), target: f.target,
       rank: [...this.players.values()].sort((a, b) => b.earned - a.earned).map((p, i) => ({ id: p.id, name: p.name, look: p.look, bot: p.bot, rank: i + 1, earned: Math.floor(p.earned), fired: false, warn: p.warn, stats: p.stats })),
     };
-    this.sayAll(cleared ? '금요일까지 버텼다! 너희는 최고의 물범들이다!' : `${this.dayName(f.day)} 목표 실패… 공장 문 닫는다!`, cleared ? FACE.happy : FACE.shock);
+    this.sayAll(cleared ? line('coopWin') : line('coopLose', { d: this.dayName(f.day) }), cleared ? FACE.happy : FACE.shock);
   }
 
   removePlayer(pid) {
     const p = this.players.get(pid);
     if (!p) return;
-    if (this.coop) { p.bot = true; p.diff = 1; p.ai = null; p.name += '(봇)'; this.noteAll(`${p.name}가 나가서 봇이 대신 일한다.`); }
-    else { p.left = true; if (!p.fired) { p.fired = true; p.firedAt = this.time; } this.noteAll(`${p.name}님이 퇴근했다.`); }
+    if (this.coop) { p.bot = true; p.diff = 1; p.ai = null; p.name += '(봇)'; this.noteAll(`${p.name}님이 나가서 봇이 대신 일해요.`); }
+    else { p.left = true; if (!p.fired) { p.fired = true; p.firedAt = this.time; } this.noteAll(`${p.name}님이 퇴근했어요.`); }
   }
 
   // ---------- 튜토리얼 ----------
@@ -531,21 +540,21 @@ export class Sim {
     T.t += dt;
     const next = (say, face) => { T.step++; T.t = 0; T.flag = null; if (say) this.sayAll(say, face); };
     switch (T.step) {
-      case -1: if (T.t > 0.3) { f.orders.push({ id: f.nextOid++, t: 0, q: 1, d: 0, tl: 9999, tt: 9999, boss: false }); next('어서 와라, 신입 물범. 나는 이 공장의 사장이다. 오늘부터 일을 가르쳐 주마.'); } break;
-      case 0: if (T.t > 3.5) next('먼저 왼쪽 위의 멸치 구역으로 가라. 수조 앞에 서 봐라.'); break;
-      case 1: if (p.hold || distToStation(p.x, p.y, STATION_BY_ID.tank0) <= NEAR + 10) next('좋아. 행동 버튼(E / 스페이스)을 눌러 멸치를 건져라. 초록 칸에서 멈추면 된다!'); break;
-      case 2: if (p.hold) next('잡았군! 이제 아래쪽 손질대로 가서 손질해라. 빨간 점부터 점선을 따라 쭉 그어라.'); break;
-      case 3: if (p.hold && p.hold.s >= 1) next('다음은 바로 옆 포장대다. 생선 조각을 상자 칸에 빈틈없이 끌어다 놓아라.'); break;
-      case 4: if (p.hold && p.hold.s >= 2) next('포장 완료! 주문이 들어와 있다. 아래쪽 출하 트럭으로 상자를 가져가 출하해라.'); break;
-      case 5: if (p.stats.orders >= 1) { f.money = Math.max(f.money, 200); next('첫 주문 완료! 이제 가운데 컴퓨터로 가서 멸치 기계를 업그레이드해 봐라. 자동으로 돈을 벌어준다.'); } break;
-      case 6: if (f.zones[0].lv >= 2) { p.stress = 65; T.stress = false; next('일하다 보면 스트레스가 쌓인다. 장난감 버튼(Q / 🏐)으로 놀면 풀린다. 한번 놀아 봐라.'); } break;
+      case -1: if (T.t > 0.3) { f.orders.push({ id: f.nextOid++, t: 0, q: 1, d: 0, tl: 9999, tt: 9999, boss: false }); next('어서 와요, 신입 물범님! 저는 이 공장 사장이에요. 오늘은 제가 일을 차근차근 알려 줄게요.', FACE.happy); } break;
+      case 0: if (T.t > 3.5) next('우리 공장은 동그란 모양이에요. 가운데에 트럭이 있고, 둘레를 ①→②→③ 순서로 돌면서 일해요. 먼저 위쪽 ① 수조 구역의 멸치 수조로 가 볼까요?'); break;
+      case 1: if (p.hold || distToStation(p.x, p.y, STATION_BY_ID.tank0) <= NEAR + 10) next('잘했어요! 행동 버튼(E / 스페이스)을 눌러 멸치를 건져요. 움직이는 막대가 초록 칸에 왔을 때 누르면 돼요.'); break;
+      case 2: if (p.hold) next('잡았네요! 이제 파란 바닥 화살표를 따라 왼쪽 ② 손질 구역으로 가요. 빨간 점부터 점선을 따라 쭉 그으면 손질 끝!'); break;
+      case 3: if (p.hold && p.hold.s >= 1) next('최고예요! 초록 화살표를 따라 아래쪽 ③ 포장 구역으로 가요. 포장 기계 배선을 같은 색끼리 이어 주면 포장돼요.'); break;
+      case 4: if (p.hold && p.hold.s >= 2) next('포장 완료! 주황 화살표를 따라 가운데 트럭으로 가서 출하해 주세요. 주문이 기다리고 있어요~'); break;
+      case 5: if (p.stats.orders >= 1) { f.money = Math.max(f.money, 200); next('첫 주문 완료! 정말 잘했어요. 이제 오른쪽 ④ 사무 구역의 컴퓨터에서 멸치 기계를 업그레이드해 봐요. 자동으로 돈을 벌어 줘요.', FACE.happy); } break;
+      case 6: if (f.zones[0].lv >= 2) { p.stress = 65; T.stress = false; next('일하다 보면 스트레스가 쌓여요. 장난감 버튼(Q / 🏐)으로 놀면 풀려요. 한번 놀아 봐요~'); } break;
       case 7: if (p.toy) next(); break;
-      case 8: if (T.t > 2.5) { T.cctvDone = false; this.startCctv(f); next('…방금 그 사이렌 들었나? CCTV 점검이다! 2초 안에 장난감을 내려놔라(다시 누르기)!', FACE.angry); } break;
+      case 8: if (T.t > 2.5) { T.cctvDone = false; this.startCctv(f); next('…그런데 노는 걸 저한테 들키면 안 돼요. 지금 CCTV 점검이다! 2초 안에 장난감을 내려놔!', FACE.angry); } break;
       case 9: if (T.cctvDone) {
-        if (p.warn > 0) { p.warn = 0; T.step = 7; T.t = 0; p.toy = 0; this.sayAll('걸렸잖아! 경고는 3번이면 해고다. 다시 놀아 봐라. 이번엔 빨리 내려놔라.', FACE.angry); }
-        else next('잘 피했다. 딴짓은 몰래 하는 거다.', FACE.happy);
+        if (p.warn > 0) { p.warn = 0; T.step = 7; T.t = 0; p.toy = 0; this.sayAll('걸렸잖아! 경고 3번이면 해고다. 다시 놀아 보고, 이번엔 빨리 내려놔.', FACE.angry); }
+        else next('후후, 잘 피했네요. 딴짓은 몰래 하는 거예요~', FACE.happy);
       } break;
-      case 10: if (T.t > 3) next('경쟁 모드에선 컴퓨터로 다른 공장을 방해할 수도 있다. 튜토리얼 끝! 이제 진짜 일하러 가라.', FACE.happy); break;
+      case 10: if (T.t > 3) next('경쟁 모드에선 컴퓨터로 다른 공장을 방해할 수도 있어요. 튜토리얼 끝! 오늘도 화이팅이에요!', FACE.happy); break;
       case 11: if (T.t > 5) { this.phase = 'end'; this.result = { mode: 'tut', cleared: true, rank: [] }; } break;
     }
   }
@@ -570,7 +579,8 @@ export class Sim {
         z: f.zones.map((z, i) => [z.u ? 1 : 0, z.lv, z.br ? 1 : 0, this.catOn(f, i) ? 1 : 0]),
         o: f.orders.map((o) => [o.id, o.t, o.q, o.d, Math.round(o.tl), o.tt, o.boss ? 1 : 0]),
         c: f.cats.map((c) => [c.id, Math.round(c.x), Math.round(c.y), c.st === 'eat' ? 1 : c.st === 'flee' ? 2 : 0, c.dir]),
-        sl: Math.round(f.slip * 10) / 10, cc: f.cctv.active ? 1 : 0,
+        sl: Math.round(f.slip * 10) / 10, cc: f.cctv.active ? 1 : 0, sh: f.shipped,
+        bz: this.playersOf(f).filter((q) => q.work).map((q) => q.work),
         day: f.day, tg: f.target, de: Math.floor(f.dayEarned),
       },
       p: ps,

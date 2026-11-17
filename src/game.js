@@ -1,9 +1,11 @@
 // ===== 클라이언트 게임 화면 (렌더링 · 입력 · HUD) =====
 import {
   TILE, SPEED, HOLD_SPEED, MAP_W, MAP_H, FISH, STATIONS, STATION_BY_ID, UNLOCK, autoRate, fishValue, upCost, MAX_LV, TOYS, SABS,
-  buildSolid, zoneX, EMOTES, DAY_NAMES,
+  buildSolid, EMOTES, DAY_NAMES, GATES, SECTIONS, polar, CX, CY, R_WALK, stationPoint, nearestOf,
 } from './data.js';
-import { background, sealSprite, itemSprite, catSprite, bossPortrait, SEAL_SIZE } from './sprites.js';
+import { sealSprite, itemSprite, catSprite, bossPortrait, SEAL_SIZE } from './sprites.js';
+import { background, drawWorldDynamic, drawStationsDynamic, drawOverhead, updateBelt, gateSignText } from './world.js';
+import { store } from './util.js';
 import { audio } from './audio.js';
 import { runMinigame, mgActive, cancelMinigame } from './minigames.js';
 import { clamp, distToStation, moveWithCollision, fmt, fmtTime, escapeHtml, rand } from './util.js';
@@ -27,7 +29,8 @@ export class Game {
     this.pcOpen = false; this.pcTab = 'up'; this.sabTarget = null; this.toySel = 0;
     this.sendT = 0; this.lastSent = '';
     this.bumpCd = 0; this.catCd = new Map();
-    this.solidKey = ''; this.solid = null;
+    this.solid = buildSolid(); this.busy = {}; this.shipFlash = 0; this.guideKey = ''; this.mapOpen = false;
+    this.opt = { arrows: store.get('arrows', true), zoom: store.get('zoom', 1) };
     this.t = 0; this.alive = true; this.lbT = 0; this.ordKey = null;
     this.viewFi = -1;
     this.canvas = $('#cv'); this.ctx = this.canvas.getContext('2d');
@@ -52,8 +55,7 @@ export class Game {
     const me = s.me;
     if (first || !this.placed) { this.me.x = me.x; this.me.y = me.y; this.cam.x = me.x; this.cam.y = me.y; this.placed = true; }
     // 지형
-    const key = s.f.z.map((z) => z[0]).join('');
-    if (key !== this.solidKey) { this.solidKey = key; this.solid = buildSolid(s.f.z.map((z) => z[0] === 1)); }
+    this.busy = {}; for (const id of s.f.bz || []) this.busy[id] = 1;
     if (this.viewFi !== s.f.i) { this.viewFi = s.f.i; this.ents.clear(); this.cats.clear(); }
     // 다른 플레이어
     const seen = new Set();
@@ -97,6 +99,7 @@ export class Game {
       case 'fired': if (a === 1) this.overlay('🚫 해고!', '관전 모드로 전환돼요', 2.5); cancelMinigame(); this.closePc(); break;
       case 'unlock': this.shake = 0.6; break;
       case 'bgm': audio.bgm(a); break;
+      case 'ship': this.shipFlash = 0.7; break;
       case 'day': this.overlay(`${this.dayName(a)} 클리어!`, `실적 ${fmt(c)} / 목표 ${fmt(d)}`, 4.5); audio.sfx('win'); break;
     }
   }
@@ -203,8 +206,9 @@ export class Game {
       if (mgActive()) return;
       const k = e.key.toLowerCase();
       if (k === 'enter') { e.preventDefault(); this.openChat(); return; }
-      if (k === 'escape') { this.closePc(); this.toggleEmotes(false); return; }
+      if (k === 'escape') { this.closePc(); this.toggleEmotes(false); this.toggleMap(false); return; }
       if (k === 'tab') { e.preventDefault(); $('#lb').classList.toggle('big'); return; }
+      if (k === 'm') { this.toggleMap(); return; }
       if (this.pcOpen) return;
       this.keys.add(k);
       if ((k === 'e' || k === ' ') && !e.repeat) { e.preventDefault(); this.act(); }
@@ -251,6 +255,8 @@ export class Game {
       tap('#spec-l', () => this.spec(-1)),
       tap('#spec-r', () => this.spec(1)),
       tap('#pc-close', () => this.closePc()),
+      tap('#btn-map', () => this.toggleMap()),
+      tap('#mapov', () => this.toggleMap(false)),
       tap('#lb', () => $('#lb').classList.toggle('big')),
     ];
     document.querySelectorAll('#emotes button').forEach((b, i) => {
@@ -354,19 +360,19 @@ export class Game {
         if (!z[0]) return { st: best, label: `🔒 ${FISH[best.z].name} 구역 · 컴퓨터에서 해금`, run: null };
         if (hold) return { st: best, label: '들고 있는 것 버리기', run: () => this.send({ t: 'a', k: 'drop' }) };
         if (z[3]) return { st: best, label: '🐱 고양이를 먼저 쫓아내요!', run: null };
-        return { st: best, label: `${FISH[best.z].name} 건지기`, run: () => this.mg('catch', best.z, { t: 'a', k: 'catch', z: best.z }) };
+        return { st: best, label: `${FISH[best.z].name} 건지기`, run: () => this.mg('catch', best.z, { t: 'a', k: 'catch', z: best.z }, best.id) };
       }
       case 'mach': {
         const z = f.z[best.z];
         if (!z[0]) return null;
-        if (z[2]) return { st: best, label: '🔧 기계 수리하기', run: () => this.mg('repair', 0, { t: 'a', k: 'fix', z: best.z }) };
+        if (z[2]) return { st: best, label: '🔧 기계 수리하기', run: () => this.mg('repair', 0, { t: 'a', k: 'fix', z: best.z }, best.id) };
         return { st: best, label: `${FISH[best.z].name} 자동 기계 Lv.${z[1]}`, run: null };
       }
-      case 'cut': return hs === 0 ? { st: best, label: '손질하기', run: () => this.mg('cut', ht, { t: 'a', k: 'cut' }) } : { st: best, label: '손질대 · 날생선을 들고 와요', run: null };
-      case 'pack': return hs === 1 ? { st: best, label: '포장하기', run: () => this.mg('pack', ht, { t: 'a', k: 'pack' }) } : { st: best, label: '포장대 · 손질한 생선을 들고 와요', run: null };
+      case 'cut': return hs === 0 ? { st: best, label: '손질하기', run: () => this.mg('cut', ht, { t: 'a', k: 'cut' }, best.id) } : { st: best, label: '손질대 · 날생선을 들고 와요', run: null };
+      case 'pack': return hs === 1 ? { st: best, label: '포장하기', run: () => this.mg('pack', ht, { t: 'a', k: 'pack' }, best.id) } : { st: best, label: '포장대 · 손질한 생선을 들고 와요', run: null };
       case 'truck': return hs === 2 ? { st: best, label: '출하하기!', run: () => this.send({ t: 'a', k: 'ship' }) } : { st: best, label: '출하 트럭 · 포장 상자를 들고 와요', run: null };
-      case 'pc': return m.hk > 0 ? { st: best, label: '💻 재부팅하기', run: () => this.mg('reboot', 0, { t: 'a', k: 'unhack' }) } : { st: best, label: '컴퓨터 열기', run: () => this.openPc() };
-      case 'mop': return f.sl > 0 ? { st: best, label: '🧽 바닥 닦기', run: () => this.mg('mop', 0, { t: 'a', k: 'mop' }) } : { st: best, label: '청소 도구함 · 바닥이 깨끗해요', run: null };
+      case 'pc': return m.hk > 0 ? { st: best, label: '💻 재부팅하기', run: () => this.mg('reboot', 0, { t: 'a', k: 'unhack' }, best.id) } : { st: best, label: '컴퓨터 열기', run: () => this.openPc() };
+      case 'mop': return f.sl > 0 ? { st: best, label: '🧽 바닥 닦기', run: () => this.mg('mop', 0, { t: 'a', k: 'mop' }, best.id) } : { st: best, label: '청소 도구함 · 바닥이 깨끗해요', run: null };
       case 'sofa': return { st: best, label: '소파에서 쉬기 (장난감)', run: () => this.toggleToy() };
       case 'board': return { st: best, label: '주문 게시판 · 오른쪽 위를 확인해요', run: () => { const o = $('#orders'); o.classList.remove('pulse'); void o.offsetWidth; o.classList.add('pulse'); } };
     }
@@ -380,18 +386,20 @@ export class Game {
     else if (it) audio.sfx('click');
   }
 
-  async mg(kind, tier, msg) {
+  async mg(kind, tier, msg, stId) {
     this.keys.clear(); this.joy.x = this.joy.y = 0;
     this.me.vx = this.me.vy = 0;
+    if (stId) this.send({ t: 'work', s: stId });
     const r = await runMinigame(kind, tier);
     if (!this.alive) return;
+    if (stId) this.send({ t: 'work', s: null });
     if (r === 'ok') this.send(msg);
     else if (r === 'fail') this.send({ t: 'a', k: 'fail' });
   }
 
   // ---------- 컴퓨터 ----------
-  openPc() { this.pcOpen = true; this.keys.clear(); $('#pc').classList.add('show'); this.renderPc(); audio.sfx('click'); }
-  closePc() { if (!this.pcOpen) return; this.pcOpen = false; $('#pc').classList.remove('show'); }
+  openPc() { this.pcOpen = true; this.keys.clear(); $('#pc').classList.add('show'); document.body.classList.add('modal-open'); this.send({ t: 'work', s: 'pc' }); this.renderPc(); audio.sfx('click'); }
+  closePc() { if (!this.pcOpen) return; this.pcOpen = false; $('#pc').classList.remove('show'); document.body.classList.remove('modal-open'); this.send({ t: 'work', s: null }); }
   renderPc() {
     const s = this.s; if (!s) return;
     const f = s.f, m = s.me, money = f.m;
@@ -440,9 +448,10 @@ export class Game {
     this.canvas.width = Math.round(w * dpr); this.canvas.height = Math.round(h * dpr);
     this.canvas.style.width = w + 'px'; this.canvas.style.height = h + 'px';
     this.dpr = dpr;
-    // 세로로 약 13~15타일 보이게 정수 배율
-    this.scale = Math.max(2, Math.round(this.canvas.height / (TILE * 14)));
-    if (this.canvas.width / this.scale < TILE * 16) this.scale = Math.max(2, Math.floor(this.canvas.width / (TILE * 16)));
+    // 화면 확대 설정: 0 넓게 / 1 보통 / 2 크게 → 세로로 보이는 타일 수
+    const rows = [21, 17, 13][this.opt.zoom] || 17;
+    this.scale = Math.max(2, Math.round(this.canvas.height / (TILE * rows)));
+    if (this.canvas.width / this.scale < TILE * (rows + 2)) this.scale = Math.max(2, Math.floor(this.canvas.width / (TILE * (rows + 2))));
   }
 
   frame(now) {
@@ -526,6 +535,10 @@ export class Game {
     this.fx = this.fx.filter((f) => f.t < 1.4);
     for (const [id, b] of this.bubbles) { b.t -= dt; if (b.t <= 0) this.bubbles.delete(id); }
     if (this.cctv) this.cctvT += dt;
+    if (this.shipFlash > 0) this.shipFlash -= dt;
+    updateBelt(dt, s.f.z.map((z) => z[0] === 1));
+    this.updateGuide();
+    if (this.mapOpen) { this.mapT = (this.mapT || 0) - dt; if (this.mapT <= 0) { this.mapT = 0.25; this.drawMap(); } }
     if (this.shake > 0) this.shake -= dt;
     // 상호작용 안내 (모바일 버튼)
     const it = this.interaction();
@@ -585,35 +598,24 @@ export class Game {
     const un = s.f.z.map((z) => z[0] === 1);
     ctx.drawImage(background(un), 0, 0);
     const t = this.t;
-    // 수조 물고기 + 기계
-    for (let z = 0; z < 5; z++) {
-      const zz = s.f.z[z];
-      const tank = STATION_BY_ID['tank' + z], m = STATION_BY_ID['mach' + z];
-      if (!zz[0]) continue;
-      const sp = itemSprite(z, 0);
-      for (let i = 0; i < 3; i++) {
-        const ph = t * (0.6 + i * 0.2) + i * 2 + z;
-        const fxp = tank.x * TILE + 8 + (Math.sin(ph) * 0.5 + 0.5) * (tank.w * TILE - 16 - sp.width);
-        const fyp = tank.y * TILE + 12 + i * 8 + Math.sin(ph * 2) * 1;
-        ctx.save(); ctx.translate(Math.round(fxp), Math.round(fyp)); if (Math.cos(ph) < 0) { ctx.scale(-1, 1); ctx.drawImage(sp, -sp.width, 0); } else ctx.drawImage(sp, 0, 0); ctx.restore();
-      }
-      // 물결
-      ctx.fillStyle = 'rgba(255,255,255,0.25)';
-      ctx.fillRect(tank.x * TILE + 3 + ((t * 12 + z * 5) % (tank.w * TILE - 10)), tank.y * TILE + 6, 4, 1);
-      // 기계 램프
-      const X = m.x * TILE, Y = m.y * TILE;
-      ctx.fillStyle = zz[2] ? (Math.floor(t * 4) % 2 ? '#ff3b30' : '#661111') : zz[3] ? '#ffcc00' : (Math.floor(t * 2 + z) % 2 ? '#4cd964' : '#1f7a33');
-      ctx.fillRect(X + 13, Y + 7, 6, 4);
-      // 레벨 눈금
-      for (let l = 0; l < zz[1]; l++) { ctx.fillStyle = l < 5 ? '#ffd23f' : '#ff8f3f'; ctx.fillRect(X + 4 + l * 2.4, Y + 25, 2, 2); }
-      if (zz[2]) for (let i = 0; i < 3; i++) { const k = (t * 0.8 + i / 3) % 1; ctx.fillStyle = `rgba(80,80,80,${0.7 - k * 0.7})`; ctx.fillRect(X + 10 + Math.sin(k * 6 + i) * 4, Y - k * 18, 6 + k * 4, 6 + k * 4); }
+    const view = { x: cx, y: cy, w: vw, h: vh };
+    drawWorldDynamic(ctx, s, t, view);
+    drawStationsDynamic(ctx, { f: s.f, me: s.me, busy: this.busy, shipped: s.f.sh, shipFlash: this.shipFlash }, t, view);
+    // 지금 가야 할 동선 강조 (들고 있을 때)
+    const g = this.guide;
+    if (g && g.st) {
+      const p = stationPoint(g.st), pulse = 0.5 + Math.sin(t * 6) * 0.3;
+      ctx.strokeStyle = `rgba(255,224,102,${pulse})`; ctx.lineWidth = 2;
+      ctx.strokeRect(g.st.x * TILE - 3, g.st.y * TILE - 3, g.st.w * TILE + 6, g.st.h * TILE + 6);
+      ctx.fillStyle = `rgba(255,224,102,${pulse})`;
+      const by = Math.round(p.y + Math.sin(t * 5) * 2);
+      for (let i = 0; i < 4; i++) ctx.fillRect(Math.round(p.x) - 4 + i, by - 8 + i, 9 - i * 2, 1);
     }
-    // 컴퓨터 화면 (해킹 표시)
-    if (s.me.hk > 0) { const p = STATION_BY_ID.pc; ctx.fillStyle = Math.floor(t * 8) % 2 ? '#ff3b30' : '#111'; ctx.fillRect(p.x * TILE + 7, p.y * TILE, 18, 12); }
     // 미끄러운 바닥
     if (s.f.sl > 0) {
-      ctx.fillStyle = 'rgba(140,220,255,0.12)'; ctx.fillRect(TILE, 10 * TILE, (MAP_W - 2) * TILE, (MAP_H - 11) * TILE);
-      for (let i = 0; i < 40; i++) { const bx = (i * 97) % ((MAP_W - 2) * TILE) + TILE, by = 10 * TILE + (i * 53) % ((MAP_H - 11) * TILE); const k = (t + i * 0.37) % 2; ctx.fillStyle = `rgba(220,245,255,${0.6 - k * 0.3})`; ctx.fillRect(bx, by - k * 3, 2, 2); }
+      ctx.fillStyle = 'rgba(140,220,255,0.12)';
+      ctx.beginPath(); ctx.arc(CX * TILE, CY * TILE, R_WALK * TILE, 0, Math.PI * 2); ctx.fill();
+      for (let i = 0; i < 60; i++) { const q = polar(4 + (i * 7.3) % 23, (i * 47) % 360); const k = (t + i * 0.37) % 2; ctx.fillStyle = `rgba(220,245,255,${0.6 - k * 0.3})`; ctx.fillRect(Math.round(q.x * TILE), Math.round(q.y * TILE - k * 3), 2, 2); }
     }
     // 엔티티 (y 정렬)
     const list = [];
@@ -628,6 +630,9 @@ export class Game {
     }
     for (const c of this.cats.values()) list.push({ y: c.y, draw: () => this.drawCat(ctx, c) });
     list.sort((a, b) => a.y - b.y).forEach((o) => o.draw());
+    drawOverhead(ctx, t, view);
+    // 마감 직전 붉은 경광 조명
+    if (s.ph === 'play' && this.mode !== 'tut' && s.tl <= (this.coop ? 45 : 120)) { ctx.fillStyle = `rgba(255,40,30,${0.06 + Math.max(0, Math.sin(t * 4)) * 0.08})`; ctx.fillRect(cx, cy, vw, vh); }
 
     // ---- 화면 좌표 텍스트 ----
     ctx.setTransform(1, 0, 0, 1, 0, 0);
@@ -636,11 +641,28 @@ export class Game {
     ctx.textAlign = 'center';
     // 구역/시설 라벨
     ctx.font = `${fs}px Galmuri11, sans-serif`;
-    for (let z = 0; z < 5; z++) {
-      const [lx, ly] = W2S((zoneX(z) + 4) * TILE, 2 * TILE - 3);
-      label(ctx, (s.f.z[z][0] ? '' : '🔒 ') + FISH[z].name + (s.f.z[z][0] ? '' : ` ${fmt(UNLOCK[z])}`), lx, ly, s.f.z[z][0] ? '#bfe6ff' : '#ffcc66');
+    const LBL = { cut: '손질대', pack: '포장대', pc: '컴퓨터', truck: '출하 트럭', mop: '청소함', board: '주문 게시판', sofa: '휴게실 소파' };
+    for (const st of STATIONS) {
+      const [lx, ly] = W2S((st.x + st.w / 2) * TILE, st.y * TILE - (st.kind === 'pc' ? 8 : 6));
+      if (lx < -100 || ly < -50 || lx > cv.width + 100 || ly > cv.height + 50) continue;
+      if (st.kind === 'tank') {
+        const u = s.f.z[st.z][0];
+        label(ctx, (u ? '' : '🔒 ') + FISH[st.z].name + (u ? ' 수조' : ` · ${fmt(UNLOCK[st.z])}원`), lx, ly, u ? FISH[st.z].color : '#ffcc66');
+      } else if (st.kind === 'mach') {
+        const zz = s.f.z[st.z]; if (!zz[0]) continue;
+        ctx.font = `${Math.max(10, fs - 3)}px Galmuri11, sans-serif`;
+        label(ctx, zz[2] ? '⚠ 고장!' : `Lv.${zz[1]}`, lx, ly - (zz[1] >= 4 ? 10 * sc : 0), zz[2] ? '#ff6b6b' : '#ffe066');
+        ctx.font = `${fs}px Galmuri11, sans-serif`;
+      } else if (LBL[st.kind]) label(ctx, LBL[st.kind], lx, ly, '#e8edf5');
     }
-    [['휴게실', 7.5, 28.4], ['손질대', 5.5, 12.6], ['포장대', 11.5, 12.6], ['손질대', 35.5, 12.6], ['포장대', 41.5, 12.6], ['컴퓨터', 21, 12.2], ['출하 트럭', 29.5, 20.9], ['청소함', 17, 25.6], ['주문 게시판', 27, 11.3]].forEach(([n, x, y]) => { const [lx, ly] = W2S(x * TILE, y * TILE); label(ctx, n, lx, ly, '#e8edf5'); });
+    // 게이트 간판 글씨
+    ctx.font = `bold ${Math.max(10, fs - 2)}px Galmuri11, sans-serif`;
+    for (const gt of GATES) {
+      const q = polar((9 + R_WALK) / 2, gt); const [lx, ly] = W2S(q.x * TILE, q.y * TILE - 22 + 8);
+      if (lx < -100 || ly < -50 || lx > cv.width + 100 || ly > cv.height + 50) continue;
+      ctx.fillStyle = '#e8f5ec'; ctx.fillText(gateSignText(gt), lx, ly + fs * 0.35);
+    }
+    ctx.font = `${fs}px Galmuri11, sans-serif`;
     // 이름표 + 말풍선 + 이모트
     for (const [id, e] of this.ents) {
       if (e.flags & 6) continue;
@@ -670,6 +692,23 @@ export class Game {
       const [x, y] = W2S(me.x, me.y + 14);
       ctx.font = `${fs}px Galmuri11, sans-serif`;
       bubble(ctx, (it.run ? '[E] ' : '') + it.label, x, y + fs * 1.6, fs, it.run ? '#ffe066' : '#c9d2e0');
+    }
+    // 방향 화살표 (목표가 화면 밖일 때)
+    if (g && g.st && this.opt.arrows && !mgActive() && !this.pcOpen) {
+      const p = stationPoint(g.st);
+      const [sx, sy] = W2S(p.x, p.y);
+      const m = 60 * this.dpr;
+      if (sx < m || sy < m || sx > cv.width - m || sy > cv.height - m) {
+        const ccx = cv.width / 2, ccy = cv.height / 2, dx = sx - ccx, dy = sy - ccy;
+        const k = Math.min((ccx - m) / Math.abs(dx || 1e-6), (ccy - m) / Math.abs(dy || 1e-6));
+        const ax = ccx + dx * k, ay = ccy + dy * k, ang = Math.atan2(dy, dx);
+        ctx.save(); ctx.translate(ax, ay); ctx.rotate(ang);
+        const z = 10 * this.dpr + Math.sin(this.t * 6) * 2 * this.dpr;
+        ctx.fillStyle = 'rgba(12,16,28,0.85)'; ctx.beginPath(); ctx.arc(0, 0, z * 2, 0, Math.PI * 2); ctx.fill();
+        ctx.fillStyle = '#ffe066'; ctx.beginPath(); ctx.moveTo(z * 1.6, 0); ctx.lineTo(-z * 0.6, -z); ctx.lineTo(-z * 0.2, 0); ctx.lineTo(-z * 0.6, z); ctx.closePath(); ctx.fill();
+        ctx.restore();
+        ctx.font = `${fs * 1.3}px sans-serif`; ctx.fillText(g.icon || '', ax, ay - z * 2.6);
+      }
     }
     // CCTV
     if (this.cctv) {
@@ -734,11 +773,106 @@ export class Game {
     if (c.st === 1) { ctx.fillStyle = '#fff'; ctx.fillRect(x + 6, y - 16, 4, 2); }
   }
 
+  // ---------- 다음 할 일 안내 ----------
+  updateGuide() {
+    const s = this.s, m = s.me, f = s.f;
+    let g = null;
+    const meP = s.p.find((p) => p[0] === this.myId);
+    const hold = meP ? meP[5] : 0;
+    const ht = hold ? Math.floor((hold - 1) / 3) : -1, hs = hold ? (hold - 1) % 3 : -1;
+    const x = this.me.x, y = this.me.y;
+    if (s.ph !== 'play' || m.fired || m.out > 0) g = null;
+    else if (m.fa > 0) g = { text: '💫 기절했어요… 잠시만요', st: null };
+    else if (m.toy) g = { text: '🏐 노는 중… CCTV 사이렌이 울리면 바로 내려놔요!', st: null };
+    else if (m.hk > 0) g = { text: '💻 해킹당했어요! ④ 사무 구역 컴퓨터에서 재부팅', st: STATION_BY_ID.pc, icon: '💻' };
+    else if (hs === 0) g = { text: `🐟 ${FISH[ht].name}(날것) → 파란 화살표 따라 ② 손질대로`, st: nearestOf('cut', x, y), icon: '🔪' };
+    else if (hs === 1) g = { text: `🔪 손질한 ${FISH[ht].name} → 초록 화살표 따라 ③ 포장대로`, st: nearestOf('pack', x, y), icon: '📦' };
+    else if (hs === 2) g = { text: `📦 ${FISH[ht].name} 상자 → 가운데 트럭으로 출하!`, st: STATION_BY_ID.truck, icon: '🚚' };
+    else {
+      const br = f.z.findIndex((z) => z[0] && z[2]);
+      const cat = f.z.findIndex((z) => z[0] && z[3]);
+      if (br >= 0) g = { text: `🔧 ${FISH[br].name} 기계가 고장났어요! 가서 고쳐요`, st: STATION_BY_ID['mach' + br], icon: '🔧' };
+      else if (cat >= 0) g = { text: `🐱 고양이가 ${FISH[cat].name} 수조에! 부딪혀서 쫓아내요`, st: STATION_BY_ID['tank' + cat], icon: '🐱' };
+      else if (f.sl > 0 && distToStation(x, y, STATION_BY_ID.mop) < 200) g = { text: '🧽 바닥이 미끄러워요. 청소함에서 닦을 수 있어요', st: STATION_BY_ID.mop, icon: '🧽' };
+      else {
+        const need = f.o.filter((o) => o[3] < o[2] && f.z[o[1]][0] && !f.z[o[1]][3]).sort((a, b) => b[1] - a[1] || a[4] - b[4]);
+        if (need.length) { const o = need[0]; g = { text: `🎣 ① 수조에서 ${FISH[o[1]].name} 건지기 (주문 ${o[3]}/${o[2]})`, st: STATION_BY_ID['tank' + o[1]], icon: '🎣' }; }
+        else { const top = f.z.reduce((a, z, i) => (z[0] ? i : a), 0); g = { text: `🎣 주문 대기 중 · ${FISH[top].name}을 미리 건져 두면 좋아요 (주문 없이 팔면 60%)`, st: STATION_BY_ID['tank' + top], icon: '🎣' }; }
+        const nx = f.z.findIndex((z) => !z[0]);
+        if (nx > 0 && f.m >= UNLOCK[nx]) g.sub = `💻 컴퓨터에서 ${FISH[nx].name} 구역을 열 수 있어요!`;
+      }
+    }
+    this.guide = g;
+    const key = g ? g.text + (g.sub || '') : '';
+    if (key !== this.guideKey) {
+      this.guideKey = key;
+      const el = $('#guide');
+      el.innerHTML = g ? `<b>${escapeHtml(g.text)}</b>${g.sub ? `<small>${escapeHtml(g.sub)}</small>` : ''}` : '';
+    }
+  }
+
+  // ---------- 지도 ----------
+  toggleMap(v) {
+    this.mapOpen = v === undefined ? !this.mapOpen : v;
+    $('#mapov').classList.toggle('show', this.mapOpen);
+    document.body.classList.toggle('modal-open', this.mapOpen || this.pcOpen);
+    if (this.mapOpen) { this.mapT = 0; this.drawMap(); audio.sfx('click'); }
+  }
+  drawMap() {
+    const cv = $('#map-cv'), s = this.s; if (!s) return;
+    const dpr = this.dpr || 1;
+    const size = Math.min(window.innerWidth * 0.86, window.innerHeight * 0.8, 520);
+    cv.style.width = size + 'px'; cv.style.height = size + 'px';
+    cv.width = Math.round(size * dpr); cv.height = Math.round(size * dpr);
+    const x = cv.getContext('2d');
+    const R = cv.width * 0.46, ox = cv.width / 2, oy = cv.height / 2, k = R / (R_WALK + 1.5);
+    const P = (tx, ty) => [ox + (tx - CX) * k, oy + (ty - CY) * k];
+    x.clearRect(0, 0, cv.width, cv.height);
+    x.fillStyle = '#232b3e'; x.beginPath(); x.arc(ox, oy, R + 6 * dpr, 0, Math.PI * 2); x.fill();
+    SECTIONS.forEach((sec) => {
+      x.fillStyle = sec.col; x.globalAlpha = 0.22;
+      x.beginPath(); x.moveTo(ox, oy); x.arc(ox, oy, R, -(sec.a + 45) * Math.PI / 180, -(sec.a - 45) * Math.PI / 180); x.closePath(); x.fill();
+      x.globalAlpha = 1;
+    });
+    x.fillStyle = '#4a4f58'; x.beginPath(); x.arc(ox, oy, 9 * k, 0, Math.PI * 2); x.fill();
+    const fsz = Math.round(12 * dpr);
+    x.textAlign = 'center'; x.textBaseline = 'middle';
+    SECTIONS.forEach((sec) => { const q = polar(13, sec.a); const [a, b] = P(q.x, q.y); x.font = `bold ${fsz}px Galmuri11, sans-serif`; x.fillStyle = sec.col; x.fillText(sec.n, a, b); });
+    const ICON = { tank: '🎣', mach: '⚙️', cut: '🔪', pack: '📦', pc: '💻', truck: '🚚', mop: '🧽', sofa: '🛋️', board: '📋' };
+    for (const st of STATIONS) {
+      const [a, b] = P(st.x, st.y);
+      let col = '#7d8794';
+      if (st.kind === 'tank') col = s.f.z[st.z][0] ? FISH[st.z].color : '#444';
+      if (st.kind === 'mach' && s.f.z[st.z][2]) col = '#ff3b30';
+      x.fillStyle = col; x.fillRect(a, b, st.w * k, st.h * k);
+      if (st.kind === 'tank' && s.f.o.some((o) => o[1] === st.z && o[3] < o[2]) && Math.floor(this.t * 3) % 2) { x.strokeStyle = '#ffe066'; x.lineWidth = 3 * dpr; x.strokeRect(a - 2 * dpr, b - 2 * dpr, st.w * k + 4 * dpr, st.h * k + 4 * dpr); }
+      if (ICON[st.kind] && st.kind !== 'mach') { x.font = `${Math.round(fsz * 1.2)}px sans-serif`; x.fillText(ICON[st.kind], a + st.w * k / 2, b + st.h * k / 2); }
+      if (st.kind === 'mach' && s.f.z[st.z][2]) { x.font = `bold ${fsz}px sans-serif`; x.fillStyle = '#fff'; x.fillText('!', a + st.w * k / 2, b + st.h * k / 2); }
+    }
+    for (const c of this.cats.values()) { const [a, b] = P(c.x / TILE, c.y / TILE); x.font = `${fsz}px sans-serif`; x.fillText('🐱', a, b); }
+    for (const [id, e] of this.ents) {
+      if (id === this.myId || (e.flags & 6)) continue;
+      const [a, b] = P(e.x / TILE, e.y / TILE); x.fillStyle = '#fff'; x.beginPath(); x.arc(a, b, 4 * dpr, 0, Math.PI * 2); x.fill();
+    }
+    if (!s.me.fired) {
+      const [a, b] = P(this.me.x / TILE, this.me.y / TILE);
+      x.fillStyle = '#ffe066'; x.strokeStyle = '#111'; x.lineWidth = 2 * dpr;
+      x.beginPath(); x.arc(a, b, 6 * dpr, 0, Math.PI * 2); x.fill(); x.stroke();
+      x.font = `bold ${fsz}px Galmuri11, sans-serif`; x.fillStyle = '#ffe066'; x.fillText('나', a, b - 14 * dpr);
+    }
+    if (this.guide && this.guide.st) {
+      const st = this.guide.st; const [a, b] = P(st.x + st.w / 2, st.y - 1);
+      x.font = `${Math.round(fsz * 1.4)}px sans-serif`; x.fillText('⬇', a, b - 6 * dpr + Math.sin(this.t * 6) * 3 * dpr);
+    }
+  }
+
   destroy() {
     this.alive = false;
     cancelAnimationFrame(this.raf);
     cancelMinigame();
     this.closePc();
+    this.toggleMap(false);
+    document.body.classList.remove('modal-open');
     this.unbind();
     $('#game').classList.remove('show');
     $('#boss').classList.remove('show');
@@ -747,6 +881,7 @@ export class Game {
     $('#outov').classList.remove('show');
     $('#count').classList.remove('show');
     $('#chatlog').innerHTML = '';
+    $('#guide').innerHTML = '';
   }
 }
 

@@ -10,8 +10,9 @@ html,body{margin:0;height:100%;background:var(--bg);color:var(--text);font-famil
 input{-webkit-user-select:text;user-select:text}
 button{font-family:inherit;color:inherit;cursor:pointer}
 #app{position:fixed;inset:0}
-.screen{position:absolute;inset:0;display:none;align-items:center;justify-content:center;padding:16px;padding-top:max(16px,env(safe-area-inset-top));overflow-y:auto;
-  background:radial-gradient(ellipse at 50% 0%,#1d2b4f 0%,var(--bg) 70%)}
+.screen{position:absolute;inset:0;display:none;align-items:center;justify-content:center;padding:16px;padding-top:max(16px,env(safe-area-inset-top));overflow-y:auto;background:transparent}
+#bg-cv{position:absolute;inset:0;width:100%;height:100%;image-rendering:pixelated}
+body.ingame #bg-cv{display:none}
 .screen.show{display:flex}
 h1,h2,h3{margin:0 0 12px;font-weight:bold}
 h2{font-size:22px}h3{font-size:16px}
@@ -41,7 +42,6 @@ input:focus{border-color:var(--primary)}
 
 /* 타이틀 */
 #s-title{cursor:pointer;flex-direction:column}
-#title-cv{position:absolute;inset:0;width:100%;height:100%;image-rendering:pixelated}
 .title-box{position:relative;text-align:center;pointer-events:none}
 .logo{line-height:1.05;text-shadow:0 4px 0 #0a0e18}
 .logo span{display:block;font-size:clamp(28px,7vw,54px);color:#bfe6ff}
@@ -266,7 +266,7 @@ body.touch #chatlog{bottom:auto;top:46%;}
 /* 공통 */
 #topbtns{position:fixed;top:max(8px,env(safe-area-inset-top));right:max(8px,env(safe-area-inset-right));display:flex;gap:6px;z-index:60}
 #topbtns button{width:42px;height:42px;background:rgba(24,33,58,.85);border:none;font-size:18px;box-shadow:0 0 0 2px #0a0e18,0 0 0 3px var(--line)}
-body.ingame #topbtns{top:max(10px,env(safe-area-inset-top));right:auto;left:calc(50% + 86px)}
+body.ingame #topbtns{top:auto;bottom:max(10px,env(safe-area-inset-bottom));right:max(10px,env(safe-area-inset-right));left:auto}
 body.ingame #topbtns button{width:38px;height:38px;font-size:16px}
 body.ingame.touch #topbtns{top:auto;bottom:max(10px,env(safe-area-inset-bottom));left:50%;transform:translateX(-50%)}
 #btn-exit{display:none}
@@ -298,3 +298,110 @@ body.ingame #btn-exit{display:block}
   .btn.big{min-height:48px;padding:10px 16px;font-size:16px}
   .logo.small b{font-size:30px}
 }
+
+/* ===== v2: 모달 열림 시 상단 버튼 숨김 ===== */
+body.modal-open #topbtns{display:none}
+body.modal-open #btn-map,body.modal-open #guide{display:none}
+.touch-only{display:none}
+body.touch .touch-only{display:flex}
+.slider select{width:60%}
+
+/* 다음 할 일 안내 */
+#guide{background:rgba(12,16,30,.88);padding:6px 14px;box-shadow:0 0 0 2px #0a0e18,0 0 0 4px rgba(255,224,102,.75);text-align:center;pointer-events:none;max-width:min(520px,46vw);font-size:14.5px;line-height:1.35}
+#guide:empty{display:none}
+#guide b{display:block;color:#fff;font-weight:normal}
+#guide small{display:block;color:var(--accent);font-size:12.5px;margin-top:2px}
+body.touch #guide{font-size:12.5px;max-width:40vw;padding:4px 8px}
+#btn-map{position:absolute;left:max(10px,env(safe-area-inset-left));top:calc(max(10px,env(safe-area-inset-top)) + 112px);width:auto;height:40px;padding:0 10px;font-size:18px;
+  background:rgba(24,33,58,.88);border:none;box-shadow:0 0 0 2px #0a0e18,0 0 0 3px var(--line);display:flex;align-items:center;gap:4px}
+#btn-map span{font-size:13px}
+body.touch #btn-map{top:auto;bottom:auto;top:calc(max(10px,env(safe-area-inset-top)) + 100px)}
+body.touch #boss{top:calc(max(10px,env(safe-area-inset-top)) + 148px)}
+#mapov{background:rgba(5,8,14,.72)}
+.map-box{display:flex;flex-direction:column;align-items:center;gap:8px}
+.map-box canvas{image-rendering:auto}
+.map-box p{margin:0;color:var(--muted);font-size:13px}
+
+/* 미니게임 크게 (배선 퍼즐) */
+#mg.mg-big .mg-box{padding:8px}
+#mg.mg-big .mg-act{display:none!important}
+@media (max-height:520px){
+  .mg-box{padding:6px}
+  .mg-head b{font-size:14px}
+  .mg-head{margin-bottom:3px}
+  .mg-close{width:32px;height:32px}
+  #mg.mg-big .mg-foot{display:none}
+  .mg-foot{margin-top:4px}
+}
+
+/* 모바일 버튼 투명도 · 왼손잡이 */
+.mc-btns,#joy{opacity:var(--btn-alpha,1)}
+body.lefty #joyzone{left:auto;right:0}
+body.lefty .mc-btns{right:auto;left:max(14px,env(safe-area-inset-left));grid-template-columns:96px 64px 64px}
+body.lefty #mc-act{grid-column:1}
+body.lefty #mc-toy{grid-column:2}
+body.lefty #mc-chat{grid-column:2}
+body.lefty #mc-emo{grid-column:3}
+body.lefty #emotes{right:auto;left:120px}
+
+/* 로비: 출근 카드 */
+.lobby-side{display:flex;flex-direction:column;gap:14px;min-width:0}
+.mem.card{background:#efe6cf;color:#3a2f22;box-shadow:0 0 0 3px #0a0e18,0 0 0 5px #8c7a5a;overflow:hidden;padding-top:20px}
+.mem.card::before{content:'출근 카드';position:absolute;top:0;left:0;right:0;height:16px;background:#c9b48a;font-size:10px;line-height:16px;color:#5a4a30;letter-spacing:2px}
+.mem.card::after{content:'';position:absolute;top:4px;right:6px;width:8px;height:8px;border-radius:50%;background:#0a0e18}
+.mem.card b{color:#2a2218}
+.mem.card small{color:#6a5a40}
+.mem.card .rdy,.mem.card .nrdy{font-size:11px}
+.mem.card .nrdy{color:#9a6a40}
+.stamp{position:absolute;right:4px;bottom:20px;width:44px;height:44px;border:3px solid #d02a2a;border-radius:50%;color:#d02a2a;font-weight:bold;font-size:12px;
+  display:flex;align-items:center;justify-content:center;transform:rotate(-14deg);opacity:.85;background:rgba(255,255,255,.15)}
+.stamp.new{animation:stamp .35s ease-out}
+@keyframes stamp{0%{transform:rotate(-14deg) scale(2.2);opacity:0}70%{transform:rotate(-14deg) scale(.9);opacity:1}100%{transform:rotate(-14deg) scale(1)}}
+.mem.card .crown{left:4px;top:18px}
+.mem.card .kick{top:20px}
+/* 게임 방법 카드 */
+.howto{background:var(--panel);box-shadow:0 0 0 3px #0a0e18,0 0 0 5px var(--line);padding:12px;min-height:186px;display:flex;flex-direction:column}
+.howto-cards{flex:1;position:relative}
+.ht-card{display:none;gap:10px;align-items:flex-start}
+.ht-card.on{display:flex}
+.ht-ill{font-size:30px;line-height:1.1;min-width:56px;text-align:center;background:#0b1020;padding:8px 4px;letter-spacing:-2px}
+.ht-card h4{margin:0 0 6px;color:var(--accent);font-size:15px}
+.ht-card p{margin:0;font-size:13px;line-height:1.55;color:#dfe6f5}
+.howto-nav{display:flex;align-items:center;justify-content:space-between;margin-top:8px}
+.howto-nav button{background:var(--panel2);border:none;width:40px;height:32px}
+.howto-dots i{display:inline-block;width:8px;height:8px;margin:0 3px;background:#3a4560}
+.howto-dots i.on{background:var(--accent)}
+
+/* 결과: 월급 명세서 */
+.payslip{background:#f6f1e3;color:#2a2620;width:min(720px,100%);margin:auto;padding:20px 22px;position:relative;
+  box-shadow:0 0 0 3px #0a0e18,0 14px 40px rgba(0,0,0,.55);background-image:repeating-linear-gradient(#f6f1e3 0 23px,#ebe4d2 23px 24px)}
+.payslip::before,.payslip::after{content:'';position:absolute;left:0;right:0;height:8px;background:radial-gradient(circle at 6px -2px,transparent 6px,#f6f1e3 7px) 0 0/12px 8px}
+.payslip::before{top:-8px;transform:scaleY(-1)}
+.payslip::after{bottom:-8px}
+.ps-head{display:flex;justify-content:space-between;align-items:baseline;border-bottom:3px double #2a2620;padding-bottom:6px;margin-bottom:10px}
+.ps-head b{font-size:22px;letter-spacing:6px}
+.ps-head span{font-size:12px;color:#6a6050}
+.payslip h2{color:#1d3a6b;margin:4px 0}
+.ps-sub{margin:0 0 10px;color:#6a6050;font-size:13px}
+.ps-table{width:100%;border-collapse:collapse;font-size:14.5px;margin-bottom:12px}
+.ps-table td{padding:5px 6px;border-bottom:1px dashed #b9ae94}
+.ps-table td:last-child{text-align:right;font-weight:bold}
+.ps-table tr.minus td:last-child{color:#c62f3a}
+.ps-table tr.total td{border-top:2px solid #2a2620;border-bottom:none;font-size:16px;color:#1d3a6b}
+.ps-rank{display:flex;flex-direction:column;gap:4px;max-height:34vh;overflow-y:auto;margin-bottom:8px}
+.ps-rank .rs-row{background:rgba(255,255,255,.55);border-left:6px solid #b9ae94;color:#2a2620;padding:4px 10px}
+.ps-rank .rs-row.r1{border-color:#e0a800}.ps-rank .rs-row.r2{border-color:#9aa4b2}.ps-rank .rs-row.r3{border-color:#c07a3a}
+.ps-rank .rs-row.me{background:#fff6cc}
+.ps-rank .rs-info small{color:#7a705e}
+.ps-rank .rs-amt{color:#1d3a6b}
+.payslip .rs-coins{color:#b07f1c;font-weight:bold}
+.ps-stamp{position:absolute;right:26px;top:58px;width:78px;height:78px;border:4px solid #d02a2a;border-radius:50%;color:#d02a2a;font-weight:bold;
+  display:flex;align-items:center;justify-content:center;text-align:center;line-height:1.1;transform:rotate(12deg);opacity:.8;animation:stamp .4s .3s both ease-out}
+.payslip .btn{color:var(--text)}
+.payslip .btn.primary{color:#06121f}
+@media (max-height:520px){.payslip{padding:12px 16px}.ps-table{font-size:13px}.ps-table td{padding:3px 6px}.ps-stamp{width:60px;height:60px;top:40px;font-size:12px}}
+
+body.touch #boss{width:min(340px,36vw);padding:5px 8px 5px 5px;gap:6px}
+body.touch #boss canvas{width:40px;height:40px}
+body.touch #boss b{font-size:11px}
+body.touch #boss p{font-size:12px;min-height:30px;line-height:1.35}
