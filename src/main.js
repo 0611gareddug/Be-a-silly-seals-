@@ -40,7 +40,7 @@ class App {
     if (id === 's-lobby') this.renderLobby();
     if (id === 's-settings') {
       $('#set-bgm').value = Math.round(audio.bgmVol * 100); $('#set-sfx').value = Math.round(audio.sfxVol * 100);
-      $('#set-zoom').value = String(store.get('zoom', 1)); $('#set-arrows').value = store.get('arrows', true) ? '1' : '0';
+      $('#set-zoom').value = String(store.get('zoom', 1)); $('#set-ui').value = String(store.get('ui', 1)); $('#set-arrows').value = store.get('arrows', true) ? '1' : '0';
       $('#set-alpha').value = Math.round(store.get('btnAlpha', 0.9) * 100); $('#set-lefty').value = store.get('lefty', false) ? '1' : '0';
     }
     if (['s-title', 's-menu', 's-name', 's-single', 's-join', 's-custom', 's-settings', 's-lobby', 's-result'].includes(id)) audio.bgm('title');
@@ -118,6 +118,7 @@ class App {
     $('#set-sfx').addEventListener('input', (e) => { audio.setSfxVol(e.target.value / 100); });
     $('#set-sfx').addEventListener('change', () => audio.sfx('coin'));
     $('#set-zoom').addEventListener('change', (e) => store.set('zoom', +e.target.value));
+    $('#set-ui').addEventListener('change', (e) => { store.set('ui', +e.target.value); this.applyPrefs(); });
     $('#set-arrows').addEventListener('change', (e) => store.set('arrows', e.target.value === '1'));
     $('#set-alpha').addEventListener('input', (e) => { store.set('btnAlpha', e.target.value / 100); this.applyPrefs(); });
     $('#set-lefty').addEventListener('change', (e) => { store.set('lefty', e.target.value === '1'); this.applyPrefs(); });
@@ -267,13 +268,14 @@ class App {
   applyPrefs() {
     document.body.style.setProperty('--btn-alpha', String(store.get('btnAlpha', 0.9)));
     document.body.classList.toggle('lefty', !!store.get('lefty', false));
+    const ui = store.get('ui', 1); ['ui0', 'ui1', 'ui2'].forEach((c, i) => document.body.classList.toggle(c, i === ui));
   }
   buildHowto() {
     const cards = [
-      ['🎣<br>🔪<br>📦<br>🚚', '① 일하는 순서', '위쪽 ① 수조에서 생선을 건지고 → 왼쪽 ② 손질대에서 손질 → 아래 ③ 포장대에서 배선 포장 → 가운데 트럭으로 출하! 바닥의 색깔 화살표를 따라가면 돼요.'],
-      ['💰<br>⚙️<br>🔓', '② 돈과 업그레이드', '주문을 처리하면 돈을 벌어요. 오른쪽 ④ 사무 구역의 컴퓨터에서 자동 기계를 업그레이드하면 가만히 있어도 돈이 들어오고, 그 구역 생선 값도 올라요. 새 구역을 열면 더 비싼 생선을 다룰 수 있어요.'],
+      ['🎣<br>🔪<br>📦<br>🚚', '① 처음엔 손으로', '위쪽 ① 수조에서 건지기 → 왼쪽 ② 손질 → 아래 ③ 포장대에서 상자 포장 → 벨트가 가운데 트럭까지! 완벽 판정을 이어 가면 콤보 보너스가 붙어요.'],
+      ['🟢<br>⚙️<br>➰', '② 바닥 버튼으로 자동화', '바닥의 초록 버튼을 밟아 기계를 사요. 뜰채 → 손질기 → 포장기 → 연결 벨트까지 사면 그 구역은 완전 자동! 트럭 앞 업그레이더는 상자 값을 올려요. 비싼 생선은 직접 하다가 나중에 자동화해요.'],
       ['😵<br>🏐<br>📹', '③ 스트레스와 CCTV', '일하면 스트레스가 쌓여요. 장난감(Q / 🏐)으로 풀 수 있지만 딴짓이에요! 사이렌이 울리면 2초 안에 내려놓지 않으면 경고. 경고 3번이면 해고예요.'],
-      ['🏆<br>🤝<br>🐱', '④ 모드별 승리', '경쟁: 끝까지 해고되지 않고 가장 많이 번 물범이 승리. 컴퓨터로 남의 공장에 고양이·해킹을 보낼 수 있어요. 협동: 다 같이 하루 목표 실적을 채워 금요일까지 버텨요.'],
+      ['🏆<br>✨<br>🐱', '④ 이벤트와 승리', '가끔 황금 타임·주문 러시·정전·VIP·사장님 순찰이 터져요! 경쟁: 해고되지 않고 가장 많이 번 물범이 승리, 컴퓨터로 방해 가능. 협동: 하루 목표 실적을 채워 금요일까지!'],
     ];
     $('#howto .howto-cards').innerHTML = cards.map((c, i) => `<div class="ht-card${i ? '' : ' on'}"><div class="ht-ill">${c[0]}</div><div><h4>${c[1]}</h4><p>${c[2]}</p></div></div>`).join('');
     $('#howto .howto-dots').innerHTML = cards.map((_, i) => `<i class="${i ? '' : 'on'}"></i>`).join('');

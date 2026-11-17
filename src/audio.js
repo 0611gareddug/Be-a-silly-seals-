@@ -109,6 +109,14 @@ class AudioMan {
       case 'start': [523, 659, 784].forEach((f, i) => this.tone('square', f, 0, 0.12, 0.1, i * 0.12)); this.tone('square', 1047, 0, 0.3, 0.1, 0.36); break;
       case 'win': [523, 659, 784, 1047, 784, 1047].forEach((f, i) => this.tone('square', f, 0, 0.14, 0.1, i * 0.13)); break;
       case 'tick': this.tone('square', 1500, 0, 0.03, 0.05); break;
+      case 'perfect': [784, 988, 1319, 1568].forEach((f, i) => this.tone('square', f, 0, 0.08, 0.09, i * 0.05)); break;
+      case 'thud': this.tone('sine', 140, 60, 0.12, 0.45); this.noise(0.06, 0.3, 500); break;
+      case 'tape': { const c = this.ctx; const t = c.currentTime; this.noise(0.45, 0.35, 2600, 0, 0.6); const o = c.createOscillator(), g = c.createGain(); o.type = 'sawtooth'; o.frequency.setValueAtTime(180, t); o.frequency.linearRampToValueAtTime(420, t + 0.4); g.gain.setValueAtTime(0.05 * this.sfxVol, t); g.gain.exponentialRampToValueAtTime(0.0001, t + 0.45); o.connect(g).connect(c.destination); o.start(t); o.stop(t + 0.5); break; }
+      case 'scale': this.noise(0.07, 0.3, 4200, 0, 3); break;
+      case 'whoosh': this.noise(0.3, 0.35, 900, 0, 0.4); this.tone('sine', 300, 900, 0.25, 0.1); break;
+      case 'build': this.tone('square', 220, 880, 0.18, 0.15); this.noise(0.2, 0.3, 700, 0.05); [659, 880, 1175].forEach((f, i) => this.tone('square', f, 0, 0.09, 0.09, 0.15 + i * 0.07)); break;
+      case 'event': [440, 554, 659, 880].forEach((f, i) => this.tone('sawtooth', f, 0, 0.12, 0.08, i * 0.09)); break;
+      case 'combo': this.tone('square', 880, 1320, 0.1, 0.08); break;
       case 'warnBeep': this.tone('square', 880, 0, 0.1, 0.12); break;
     }
   }

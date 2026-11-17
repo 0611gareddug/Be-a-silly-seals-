@@ -1,10 +1,10 @@
 // ===== 클라이언트 게임 화면 (렌더링 · 입력 · HUD) =====
 import {
-  TILE, SPEED, HOLD_SPEED, MAP_W, MAP_H, FISH, STATIONS, STATION_BY_ID, UNLOCK, autoRate, fishValue, upCost, MAX_LV, TOYS, SABS,
-  buildSolid, EMOTES, DAY_NAMES, GATES, SECTIONS, polar, CX, CY, R_WALK, stationPoint, nearestOf,
+  TILE, SPEED, HOLD_SPEED, MAP_W, MAP_H, FISH, STATIONS, STATION_BY_ID, UNLOCK, MAX_LV, TOYS, SABS, MACHS, BASKET, EVENTS, BELT_SPEED, BELT_INLETS,
+  buildSolid, EMOTES, DAY_NAMES, GATES, SECTIONS, polar, CX, CY, R_WALK, stationPoint, nearestOf, activePads, COMBO_STEP, COMBO_MAX, UPGRADERS,
 } from './data.js';
 import { sealSprite, itemSprite, catSprite, bossPortrait, SEAL_SIZE } from './sprites.js';
-import { background, drawWorldDynamic, drawStationsDynamic, drawOverhead, updateBelt, gateSignText } from './world.js';
+import { background, drawWorldDynamic, drawStationsDynamic, drawOverhead, updateBelt, gateSignText, drawBelts, drawUpgraders, drawAutomation, drawPads, drawDecos } from './world.js';
 import { store } from './util.js';
 import { audio } from './audio.js';
 import { runMinigame, mgActive, cancelMinigame } from './minigames.js';
@@ -29,7 +29,7 @@ export class Game {
     this.pcOpen = false; this.pcTab = 'up'; this.sabTarget = null; this.toySel = 0;
     this.sendT = 0; this.lastSent = '';
     this.bumpCd = 0; this.catCd = new Map();
-    this.solid = buildSolid(); this.busy = {}; this.shipFlash = 0; this.guideKey = ''; this.mapOpen = false;
+    this.solid = buildSolid(); this.busy = {}; this.items = new Map(); this.pads = []; this.padNear = null; this.buyDismiss = null; this.pops = []; this.shipFlash = 0; this.guideKey = ''; this.mapOpen = false;
     this.opt = { arrows: store.get('arrows', true), zoom: store.get('zoom', 1) };
     this.t = 0; this.alive = true; this.lbT = 0; this.ordKey = null;
     this.viewFi = -1;
@@ -76,6 +76,16 @@ export class Game {
       Object.assign(c, { tx: x, ty: y, st, dir });
     }
     for (const id of this.cats.keys()) if (!cseen.has(id)) this.cats.delete(id);
+    // 벨트 상자 (로컬에서 부드럽게 이동, 서버 위치로 보정)
+    const iseen = new Set();
+    for (const [id, inl, d, t, auto] of s.f.b || []) {
+      iseen.add(id);
+      const it = this.items.get(id);
+      if (!it) this.items.set(id, { inl, d, t, auto });
+      else if (Math.abs(it.d - d) > 30) it.d = d; else it.d += (d - it.d) * 0.3;
+    }
+    for (const id of this.items.keys()) if (!iseen.has(id)) this.items.delete(id);
+    this.pads = activePads(this.padStateOf(s.f));
     for (const ev of s.ev) this.onEvent(ev);
     this.updateHud();
   }
@@ -100,10 +110,22 @@ export class Game {
       case 'unlock': this.shake = 0.6; break;
       case 'bgm': audio.bgm(a); break;
       case 'ship': this.shipFlash = 0.7; break;
+      case 'build': {
+        const pad = this.pads.find((x) => x.pad.id === a) || null;
+        const pd = pad ? pad.pad : null;
+        const P = pd ? { x: (pd.x + pd.w / 2) * TILE, y: (pd.y + pd.h / 2) * TILE } : { x: this.me.x, y: this.me.y };
+        this.pops.push({ x: P.x, y: P.y - 20, t: 0 });
+        this.shake = Math.max(this.shake, 0.25);
+        break;
+      }
+      case 'event': this.showEvent(a, b); break;
+      case 'combo': if (a >= 2) { this.fxMe(`🔥 콤보 ${a}!`, '#ffb84a'); audio.sfx('combo'); } break;
+      case 'full': if (this.s && this.s.f) this.notice(`⚠ ${FISH[a].name} ${['바구니', '손질기', '포장기'][b]}가 꽉 찼어요! 꺼내 주세요`); break;
       case 'day': this.overlay(`${this.dayName(a)} 클리어!`, `실적 ${fmt(c)} / 목표 ${fmt(d)}`, 4.5); audio.sfx('win'); break;
     }
   }
   dayName(d) { return d <= 5 ? DAY_NAMES[d - 1] : `${d}일차`; }
+  padStateOf(f) { return { z: f.z.map((z) => ({ u: !!z[0], m: [z[3], z[4], z[5], z[6]] })), up: f.up || [0, 0, 0], deco: f.dc || [0, 0, 0, 0, 0] }; }
 
   onChat(m) {
     const log = $('#chatlog');
@@ -128,6 +150,12 @@ export class Game {
     clearTimeout(this._ot);
     if (dur) this._ot = setTimeout(() => o.classList.remove('show'), dur * 1000);
   }
+  showEvent(id, dur) {
+    if (!id) return;
+    const E = EVENTS.find((e) => e.id === id); if (!E) return;
+    this.overlay(`${E.icon} ${E.name}!`, E.desc, 2.6);
+    this.shake = 0.35;
+  }
   flashWarn() { const w = $('#h-warn'); w.classList.remove('pulse'); void w.offsetWidth; w.classList.add('pulse'); }
 
   // ---------- HUD ----------
@@ -142,6 +170,11 @@ export class Game {
     sb.style.background = st < 50 ? '#4cd964' : st < 80 ? '#ffcc00' : '#ff3b30';
     $('#h-stress-n').textContent = Math.round(st);
     $('#h-warn').textContent = '⚠️'.repeat(me.wa) + '·'.repeat(Math.max(0, 3 - me.wa));
+    const cb = me.cb || 0;
+    $('#h-combo').textContent = cb ? `🔥 콤보 ${cb} · +${Math.round(Math.min(cb, COMBO_MAX) * COMBO_STEP * 100)}%` : '';
+    const evb = $('#evbar');
+    if (f.ev) { const E = EVENTS.find((e) => e.id === f.ev[0]); evb.classList.add('show'); evb.className = 'show ev-' + f.ev[0]; evb.innerHTML = `${E.icon} <b>${E.name}</b>${E.dur ? ` · ${f.ev[1]}초` : ''}`; }
+    else evb.className = '';
     if (this.coop) {
       $('#h-day').textContent = this.dayName(f.day || 1);
       $('#h-target i').style.transform = `scaleX(${clamp(f.de / Math.max(1, f.tg), 0, 1)})`;
@@ -206,12 +239,13 @@ export class Game {
       if (mgActive()) return;
       const k = e.key.toLowerCase();
       if (k === 'enter') { e.preventDefault(); this.openChat(); return; }
-      if (k === 'escape') { this.closePc(); this.toggleEmotes(false); this.toggleMap(false); return; }
+      if (k === 'escape') { this.closePc(); this.toggleEmotes(false); this.toggleMap(false); if (this.buyPadCur) { this.buyDismiss = this.padNear; $('#buy').classList.remove('show'); this.buyPadCur = null; } return; }
       if (k === 'tab') { e.preventDefault(); $('#lb').classList.toggle('big'); return; }
       if (k === 'm') { this.toggleMap(); return; }
       if (this.pcOpen) return;
       this.keys.add(k);
       if ((k === 'e' || k === ' ') && !e.repeat) { e.preventDefault(); this.act(); }
+      if (k === 'escape' && this.buyPadCur) { this.buyDismiss = this.padNear; $('#buy').classList.remove('show'); this.buyPadCur = null; }
       if (k === 'q' && !e.repeat) this.toggleToy();
       if (['1', '2', '3', '4'].includes(k) && !e.repeat) this.emote(+k - 1);
       if (this.s && this.s.me.fired) { if (k === 'arrowleft' || k === 'a') this.spec(-1); if (k === 'arrowright' || k === 'd') this.spec(1); }
@@ -256,6 +290,8 @@ export class Game {
       tap('#spec-r', () => this.spec(1)),
       tap('#pc-close', () => this.closePc()),
       tap('#btn-map', () => this.toggleMap()),
+      tap('#buy-yes', () => this.buyPad()),
+      tap('#buy-no', () => { this.buyDismiss = this.padNear; $('#buy').classList.remove('show'); this.buyPadCur = null; }),
       tap('#mapov', () => this.toggleMap(false)),
       tap('#lb', () => $('#lb').classList.toggle('big')),
     ];
@@ -340,12 +376,31 @@ export class Game {
   }
 
   // 현재 상호작용 대상 계산
+  // 발밑의 구매 버튼
+  padUnder() {
+    const x = this.me.x, y = this.me.y;
+    for (const a of this.pads) {
+      const p = a.pad;
+      const m = p.w > 1 ? 2 : 5;
+      if (x >= p.x * TILE - m && x <= (p.x + p.w) * TILE + m && y >= p.y * TILE - m && y <= (p.y + p.h) * TILE + m) return a;
+    }
+    return null;
+  }
+
   interaction() {
     const s = this.s; if (!s || s.ph !== 'play') return null;
     const m = s.me; if (m.fired || m.out > 0 || m.fa > 0) return null;
+    const pad = this.padUnder();
+    if (pad) return { pad, label: `🛒 구매 · ${pad.label} ${fmt(pad.price)}원`, run: () => this.buyPad(pad) };
     let best = null, bd = ACT_RANGE;
     for (const st of STATIONS) {
-      const d = distToStation(this.me.x, this.me.y, st);
+      if (st.z !== undefined) { // 아직 없는 자동 기계 자리는 건너뜀
+        const zz = s.f.z[st.z];
+        if (st.kind === 'acut' && !zz[4]) continue;
+        if (st.kind === 'apack' && !zz[5]) continue;
+        if (st.kind === 'mach' && !zz[3] && !zz[1]) continue;
+      }
+      const d = distToStation(this.me.x, this.me.y, st) - (st.kind === 'tank' ? 4 : 0);
       if (d < bd) { bd = d; best = st; }
     }
     if (!best) return null;
@@ -354,29 +409,75 @@ export class Game {
     const ht = hold ? Math.floor((hold - 1) / 3) : -1, hs = hold ? (hold - 1) % 3 : -1;
     const f = s.f;
     if (m.toy) return { st: best, label: '장난감을 먼저 내려놔요 (Q)', run: null };
+    const Z = (z) => f.z[z]; // [u, br, cat, m0, m1, m2, m3, b0, b1, b2]
     switch (best.kind) {
       case 'tank': {
-        const z = f.z[best.z];
-        if (!z[0]) return { st: best, label: `🔒 ${FISH[best.z].name} 구역 · 컴퓨터에서 해금`, run: null };
+        const z = Z(best.z), nm = FISH[best.z].name;
+        if (!z[0]) return { st: best, label: `🔒 ${nm} 구역 · 아래 바닥 버튼으로 열어요`, run: null };
         if (hold) return { st: best, label: '들고 있는 것 버리기', run: () => this.send({ t: 'a', k: 'drop' }) };
-        if (z[3]) return { st: best, label: '🐱 고양이를 먼저 쫓아내요!', run: null };
-        return { st: best, label: `${FISH[best.z].name} 건지기`, run: () => this.mg('catch', best.z, { t: 'a', k: 'catch', z: best.z }, best.id) };
+        if (z[2]) return { st: best, label: '🐱 고양이를 먼저 쫓아내요!', run: null };
+        if (z[1]) return { st: best, label: '⚙️ 펌프 고장! 뒤쪽 모터를 고쳐요', run: null };
+        if (z[3] && !z[4]) return z[7] > 0 ? { st: best, label: `바구니에서 ${nm} 줍기 (${z[7]})`, run: () => this.send({ t: 'a', k: 'take', z: best.z, i: 0 }) } : { st: best, label: '자동 뜰채가 건지는 중… 직접 건져도 돼요', run: () => this.mg('catch', best.z, { t: 'a', k: 'catch', z: best.z }, best.id) };
+        return { st: best, label: `${nm} 건지기`, run: () => this.mg('catch', best.z, { t: 'a', k: 'catch', z: best.z }, best.id) };
       }
       case 'mach': {
-        const z = f.z[best.z];
-        if (!z[0]) return null;
-        if (z[2]) return { st: best, label: '🔧 기계 수리하기', run: () => this.mg('repair', 0, { t: 'a', k: 'fix', z: best.z }, best.id) };
-        return { st: best, label: `${FISH[best.z].name} 자동 기계 Lv.${z[1]}`, run: null };
+        const z = Z(best.z); if (!z[0]) return null;
+        if (z[1]) return { st: best, label: '🔧 펌프 수리하기', run: () => this.mg('repair', 0, { t: 'a', k: 'fix', z: best.z }, best.id) };
+        return { st: best, label: z[3] ? `자동 뜰채 Lv.${z[3]}` : '뜰채 모터 자리 · 바닥 버튼으로 사요', run: null };
+      }
+      case 'acut': {
+        const z = Z(best.z); if (!z[0] || !z[4]) return { st: best, label: '자동 손질기 자리', run: null };
+        if (!z[5] && z[8] > 0 && !hold) return { st: best, label: `손질된 ${FISH[best.z].name} 꺼내기 (${z[8]})`, run: () => this.send({ t: 'a', k: 'take', z: best.z, i: 1 }) };
+        return { st: best, label: `자동 손질기 Lv.${z[4]}${!z[5] ? ` · 바구니 ${z[8]}/${BASKET}` : ''}`, run: null };
+      }
+      case 'apack': {
+        const z = Z(best.z); if (!z[0] || !z[5]) return { st: best, label: '자동 포장기 자리', run: null };
+        if (!z[6] && z[9] > 0) return { st: best, label: `상자 ${z[9]}개 벨트로 보내기`, run: () => this.send({ t: 'a', k: 'send', z: best.z }) };
+        return { st: best, label: `자동 포장기 Lv.${z[5]}${z[6] ? ' · 완전 자동!' : ''}`, run: null };
       }
       case 'cut': return hs === 0 ? { st: best, label: '손질하기', run: () => this.mg('cut', ht, { t: 'a', k: 'cut' }, best.id) } : { st: best, label: '손질대 · 날생선을 들고 와요', run: null };
-      case 'pack': return hs === 1 ? { st: best, label: '포장하기', run: () => this.mg('pack', ht, { t: 'a', k: 'pack' }, best.id) } : { st: best, label: '포장대 · 손질한 생선을 들고 와요', run: null };
-      case 'truck': return hs === 2 ? { st: best, label: '출하하기!', run: () => this.send({ t: 'a', k: 'ship' }) } : { st: best, label: '출하 트럭 · 포장 상자를 들고 와요', run: null };
+      case 'pack': return hs === 1 ? { st: best, label: '포장 · 출하하기', run: () => this.mg('pack', ht, { t: 'a', k: 'pack' }, best.id) } : { st: best, label: '포장대 · 손질한 생선을 들고 와요', run: null };
+      case 'truck': return { st: best, label: '출하 트럭 · 벨트로 들어온 상자를 실어요', run: null };
       case 'pc': return m.hk > 0 ? { st: best, label: '💻 재부팅하기', run: () => this.mg('reboot', 0, { t: 'a', k: 'unhack' }, best.id) } : { st: best, label: '컴퓨터 열기', run: () => this.openPc() };
       case 'mop': return f.sl > 0 ? { st: best, label: '🧽 바닥 닦기', run: () => this.mg('mop', 0, { t: 'a', k: 'mop' }, best.id) } : { st: best, label: '청소 도구함 · 바닥이 깨끗해요', run: null };
       case 'sofa': return { st: best, label: '소파에서 쉬기 (장난감)', run: () => this.toggleToy() };
       case 'board': return { st: best, label: '주문 게시판 · 오른쪽 위를 확인해요', run: () => { const o = $('#orders'); o.classList.remove('pulse'); void o.offsetWidth; o.classList.add('pulse'); } };
     }
     return null;
+  }
+
+  // 구매 확인 창
+  updateBuy() {
+    const pad = this.s && this.s.ph === 'play' && !mgActive() && !this.pcOpen ? this.padUnder() : null;
+    const id = pad ? pad.pad.id + ':' + pad.price : null;
+    if (id !== this.padNear) {
+      this.padNear = id;
+      const el = $('#buy');
+      if (pad && this.buyDismiss !== id) {
+        $('#buy-ic').textContent = pad.icon;
+        $('#buy-name').textContent = pad.label;
+        $('#buy-desc').textContent = pad.desc || '';
+        $('#buy-price').textContent = fmt(pad.price) + '원';
+        el.classList.add('show');
+        this.buyPadCur = pad;
+        audio.sfx('click');
+      } else { el.classList.remove('show'); this.buyPadCur = null; }
+      if (!pad) this.buyDismiss = null;
+    }
+    if (this.buyPadCur) {
+      const money = this.s.f.m, ok = money >= this.buyPadCur.price;
+      $('#buy-yes').disabled = !ok;
+      $('#buy-yes').textContent = ok ? '구매 (E)' : '돈이 부족해요';
+      $('#buy-bar i').style.transform = `scaleX(${clamp(money / this.buyPadCur.price, 0, 1)})`;
+    }
+  }
+  buyPad(pad) {
+    pad = pad || this.buyPadCur;
+    if (!pad) return;
+    if (this.s.f.m < pad.price) { audio.sfx('fail'); this.notice(`돈이 ${fmt(pad.price - this.s.f.m)}원 부족해요`); return; }
+    this.send({ t: 'buy', k: 'pad', id: pad.pad.id });
+    this.buyDismiss = pad.pad.id + ':' + pad.price;
+    $('#buy').classList.remove('show'); this.buyPadCur = null;
   }
 
   act() {
@@ -390,11 +491,11 @@ export class Game {
     this.keys.clear(); this.joy.x = this.joy.y = 0;
     this.me.vx = this.me.vy = 0;
     if (stId) this.send({ t: 'work', s: stId });
-    const r = await runMinigame(kind, tier);
+    const res = await runMinigame(kind, tier, (this.s && this.s.me.cb) || 0);
     if (!this.alive) return;
     if (stId) this.send({ t: 'work', s: null });
-    if (r === 'ok') this.send(msg);
-    else if (r === 'fail') this.send({ t: 'a', k: 'fail' });
+    if (res.r === 'ok') this.send({ ...msg, g: res.g });
+    else if (res.r === 'fail') this.send({ t: 'a', k: 'fail' });
   }
 
   // ---------- 컴퓨터 ----------
@@ -407,16 +508,15 @@ export class Game {
     $('#pc-money').textContent = fmt(money);
     let h = '';
     if (this.pcTab === 'up') {
+      h += '<p class="tip">기계는 공장 바닥의 초록 구매 버튼을 밟아서 사요. 여기서는 라인 상태를 볼 수 있어요.</p>';
       h += f.z.map((z, i) => {
         const nm = FISH[i].name;
-        if (z[0]) {
-          const lv = z[1], max = lv >= MAX_LV, c = upCost(i, lv);
-          const gain = max ? 0 : autoRate(i, lv + 1) - autoRate(i, lv);
-          return `<div class="row"><div class="ic">${fishIcon(i)}</div><div class="info"><b>${nm} 자동 기계 Lv.${lv}${z[2] ? ' <em class="bad">고장!</em>' : ''}</b><small>자동 초당 ${autoRate(i, lv).toFixed(1)}원${max ? ' · 최고 레벨' : ` → +${gain.toFixed(1)}`} · 출하가 ${fmt(fishValue(i, lv))}원${max ? '' : ` → ${fmt(fishValue(i, lv + 1))}`}</small></div><button data-k="up" data-z="${i}" ${max || money < c ? 'disabled' : ''}>${max ? 'MAX' : '⬆ ' + fmt(c)}</button></div>`;
-        }
-        const canNext = f.z[i - 1] && f.z[i - 1][0];
-        return `<div class="row locked"><div class="ic">🔒</div><div class="info"><b>${nm} 구역</b><small>${canNext ? `해금하면 ${nm} 주문을 받을 수 있어요` : '이전 구역을 먼저 열어요'}</small></div><button data-k="unlock" data-z="${i}" ${!canNext || money < UNLOCK[i] ? 'disabled' : ''}>🔓 ${fmt(UNLOCK[i])}</button></div>`;
+        if (!z[0]) return `<div class="row locked"><div class="ic">🔒</div><div class="info"><b>${nm} 구역</b><small>잠김 · 해금 ${fmt(UNLOCK[i])}원 (수조 앞 바닥 버튼)</small></div></div>`;
+        const st = MACHS.map((M, k) => (z[3 + k] ? `${M.icon}${k < 3 ? 'Lv' + z[3 + k] : ''}` : '<span style="opacity:.35">' + M.icon + '</span>')).join(' ');
+        const full = z[6] ? '✅ 완전 자동' : z[3] ? `바구니 ${z[7 + (z[5] ? 2 : z[4] ? 1 : 0)]}/${BASKET}` : '수동';
+        return `<div class="row"><div class="ic">${fishIcon(i)}</div><div class="info"><b>${nm} 라인 ${z[1] ? '<em class="bad">고장!</em>' : ''}</b><small>${st} · ${full}</small></div></div>`;
       }).join('');
+      h += `<div class="row"><div class="ic">➰</div><div class="info"><b>출하 벨트 업그레이더</b><small>${UPGRADERS.map((u, i) => (f.up && f.up[i] ? `${u.icon}×${u.mult}` : `<span style="opacity:.35">${u.icon}</span>`)).join(' ')}</small></div></div>`;
     } else if (this.pcTab === 'toy') {
       const sel = this.pickToy();
       h += '<p class="tip">장난감은 Q / 🏐 버튼으로 사용해요. 노는 동안 CCTV에 걸리지 않게 조심!</p>';
@@ -537,6 +637,11 @@ export class Game {
     if (this.cctv) this.cctvT += dt;
     if (this.shipFlash > 0) this.shipFlash -= dt;
     updateBelt(dt, s.f.z.map((z) => z[0] === 1));
+    const dark = s.f.ev && s.f.ev[0] === 'blackout';
+    if (!dark) for (const it of this.items.values()) it.d = Math.min(BELT_INLETS[it.inl].len, it.d + BELT_SPEED * dt);
+    for (const p of this.pops) p.t += dt;
+    this.pops = this.pops.filter((p) => p.t < 1);
+    this.updateBuy();
     this.updateGuide();
     if (this.mapOpen) { this.mapT = (this.mapT || 0) - dt; if (this.mapT <= 0) { this.mapT = 0.25; this.drawMap(); } }
     if (this.shake > 0) this.shake -= dt;
@@ -600,7 +705,21 @@ export class Game {
     const t = this.t;
     const view = { x: cx, y: cy, w: vw, h: vh };
     drawWorldDynamic(ctx, s, t, view);
+    const dark = s.f.ev && s.f.ev[0] === 'blackout';
+    drawDecos(ctx, s, t);
+    drawBelts(ctx, s, t, this.items, dark);
     drawStationsDynamic(ctx, { f: s.f, me: s.me, busy: this.busy, shipped: s.f.sh, shipFlash: this.shipFlash }, t, view);
+    const ghosts = new Set(this.pads.filter((a) => a.pad.kind === 'mach' && !a.up).map((a) => a.pad.id));
+    drawAutomation(ctx, s, t, ghosts, dark);
+    const gPad = this.pads.find((a) => a.pad.kind === 'upg');
+    drawUpgraders(ctx, s, t, { g: gPad ? gPad.pad.i : -1 });
+    drawPads(ctx, this.pads, s.f.m, t, this.buyPadCur ? this.buyPadCur.pad.id : null);
+    // 설치 연출 (먼지 · 반짝)
+    for (const p of this.pops) {
+      const k = p.t;
+      for (let i = 0; i < 10; i++) { const a = i * 0.63; ctx.fillStyle = `rgba(255,236,150,${1 - k})`; ctx.fillRect(Math.round(p.x + Math.cos(a) * k * 30), Math.round(p.y + 14 + Math.sin(a) * k * 18), 2, 2); }
+      for (let i = 0; i < 6; i++) { ctx.fillStyle = `rgba(200,200,200,${0.7 - k * 0.7})`; ctx.fillRect(Math.round(p.x - 16 + i * 6), Math.round(p.y + 20 - k * 8), 5, 4); }
+    }
     // 지금 가야 할 동선 강조 (들고 있을 때)
     const g = this.guide;
     if (g && g.st) {
@@ -649,9 +768,16 @@ export class Game {
         const u = s.f.z[st.z][0];
         label(ctx, (u ? '' : '🔒 ') + FISH[st.z].name + (u ? ' 수조' : ` · ${fmt(UNLOCK[st.z])}원`), lx, ly, u ? FISH[st.z].color : '#ffcc66');
       } else if (st.kind === 'mach') {
-        const zz = s.f.z[st.z]; if (!zz[0]) continue;
+        const zz = s.f.z[st.z]; if (!zz[0] || (!zz[3] && !zz[1])) continue;
         ctx.font = `${Math.max(10, fs - 3)}px Galmuri11, sans-serif`;
-        label(ctx, zz[2] ? '⚠ 고장!' : `Lv.${zz[1]}`, lx, ly - (zz[1] >= 4 ? 10 * sc : 0), zz[2] ? '#ff6b6b' : '#ffe066');
+        label(ctx, zz[1] ? '⚠ 고장!' : `뜰채 Lv.${zz[3]}${!zz[4] ? ` · ${zz[7]}/${BASKET}` : ''}`, lx, ly - (zz[3] >= 3 ? 10 * sc : 0), zz[1] ? '#ff6b6b' : '#ffe066');
+        ctx.font = `${fs}px Galmuri11, sans-serif`;
+      } else if (st.kind === 'acut' || st.kind === 'apack') {
+        const zz = s.f.z[st.z], i = st.kind === 'acut' ? 1 : 2;
+        if (!zz[0] || !zz[3 + i]) continue;
+        const last = i === 2 ? !zz[6] : !zz[5];
+        ctx.font = `${Math.max(10, fs - 3)}px Galmuri11, sans-serif`;
+        label(ctx, `${i === 1 ? '손질기' : '포장기'} Lv.${zz[3 + i]}${last ? ` · ${zz[7 + i]}/${BASKET}` : ''}`, lx, ly, zz[7 + i] >= BASKET && last ? '#ff8a80' : '#bfe6ff');
         ctx.font = `${fs}px Galmuri11, sans-serif`;
       } else if (LBL[st.kind]) label(ctx, LBL[st.kind], lx, ly, '#e8edf5');
     }
@@ -692,6 +818,26 @@ export class Game {
       const [x, y] = W2S(me.x, me.y + 14);
       ctx.font = `${fs}px Galmuri11, sans-serif`;
       bubble(ctx, (it.run ? '[E] ' : '') + it.label, x, y + fs * 1.6, fs, it.run ? '#ffe066' : '#c9d2e0');
+    }
+    // 정전: 내 주변만 보이게
+    if (dark) {
+      const [mx, my] = W2S(me.x, me.y - 8);
+      const rr = 70 * sc;
+      const gr = ctx.createRadialGradient(mx, my, rr * 0.35, mx, my, rr);
+      gr.addColorStop(0, 'rgba(0,0,0,0)'); gr.addColorStop(1, 'rgba(2,3,8,0.93)');
+      ctx.fillStyle = gr; ctx.fillRect(0, 0, cv.width, cv.height);
+    }
+    // 황금 타임: 금빛 테두리
+    if (s.f.ev && s.f.ev[0] === 'gold') { ctx.strokeStyle = `rgba(255,210,63,${0.35 + Math.sin(this.t * 6) * 0.2})`; ctx.lineWidth = Math.max(8, cv.width / 90); ctx.strokeRect(0, 0, cv.width, cv.height); }
+    // 구매 버튼 가격표 (가까운 것만)
+    ctx.font = `${Math.max(10, fs - 3)}px Galmuri11, sans-serif`;
+    for (const a of this.pads) {
+      const pd = a.pad, px = (pd.x + pd.w / 2) * TILE, py = (pd.y + pd.h / 2) * TILE;
+      const d = Math.hypot(px - me.x, py - me.y);
+      const [lx, ly] = W2S(px, py);
+      if (lx < -60 || ly < -60 || lx > cv.width + 60 || ly > cv.height + 60) continue;
+      ctx.font = `${Math.round(fs * (pd.w > 1 ? 1.5 : 1.1))}px sans-serif`; ctx.fillText(a.icon, lx, ly + fs * 0.4);
+      if (d < 90) { ctx.font = `${Math.max(10, fs - 3)}px Galmuri11, sans-serif`; label(ctx, `${a.label} ${fmt(a.price)}`, lx, ly - fs * 1.1, s.f.m >= a.price ? '#7dff8a' : '#ff8a80'); }
     }
     // 방향 화살표 (목표가 화면 밖일 때)
     if (g && g.st && this.opt.arrows && !mgActive() && !this.pcOpen) {
@@ -786,20 +932,28 @@ export class Game {
     else if (m.toy) g = { text: '🏐 노는 중… CCTV 사이렌이 울리면 바로 내려놔요!', st: null };
     else if (m.hk > 0) g = { text: '💻 해킹당했어요! ④ 사무 구역 컴퓨터에서 재부팅', st: STATION_BY_ID.pc, icon: '💻' };
     else if (hs === 0) g = { text: `🐟 ${FISH[ht].name}(날것) → 파란 화살표 따라 ② 손질대로`, st: nearestOf('cut', x, y), icon: '🔪' };
-    else if (hs === 1) g = { text: `🔪 손질한 ${FISH[ht].name} → 초록 화살표 따라 ③ 포장대로`, st: nearestOf('pack', x, y), icon: '📦' };
-    else if (hs === 2) g = { text: `📦 ${FISH[ht].name} 상자 → 가운데 트럭으로 출하!`, st: STATION_BY_ID.truck, icon: '🚚' };
+    else if (hs === 1) g = { text: `🔪 손질한 ${FISH[ht].name} → 초록 화살표 따라 ③ 포장대로 (포장하면 벨트가 트럭까지!)`, st: nearestOf('pack', x, y), icon: '📦' };
     else {
-      const br = f.z.findIndex((z) => z[0] && z[2]);
-      const cat = f.z.findIndex((z) => z[0] && z[3]);
-      if (br >= 0) g = { text: `🔧 ${FISH[br].name} 기계가 고장났어요! 가서 고쳐요`, st: STATION_BY_ID['mach' + br], icon: '🔧' };
+      const Z = f.z;
+      const br = Z.findIndex((z) => z[0] && z[1]);
+      const cat = Z.findIndex((z) => z[0] && z[2]);
+      const full = Z.findIndex((z) => z[0] && ((z[5] && !z[6] && z[9] >= BASKET) || (z[4] && !z[5] && z[8] >= BASKET) || (z[3] && !z[4] && z[7] >= BASKET)));
+      const cheap = this.pads.filter((a) => a.price <= f.m && a.pad.kind !== 'deco').sort((a, b) => a.price - b.price)[0];
+      if (br >= 0) g = { text: `🔧 ${FISH[br].name} 펌프가 고장났어요! 뒤쪽 모터를 고쳐요`, st: STATION_BY_ID['mach' + br], icon: '🔧' };
       else if (cat >= 0) g = { text: `🐱 고양이가 ${FISH[cat].name} 수조에! 부딪혀서 쫓아내요`, st: STATION_BY_ID['tank' + cat], icon: '🐱' };
       else if (f.sl > 0 && distToStation(x, y, STATION_BY_ID.mop) < 200) g = { text: '🧽 바닥이 미끄러워요. 청소함에서 닦을 수 있어요', st: STATION_BY_ID.mop, icon: '🧽' };
+      else if (full >= 0) { const z = Z[full], i = z[5] ? 2 : z[4] ? 1 : 0; g = { text: `⚠ ${FISH[full].name} ${['바구니', '손질기', '포장기'][i]}가 꽉 찼어요! ${i === 2 ? '벨트로 보내요' : '꺼내 가요'}`, st: STATION_BY_ID[['tank', 'acut', 'apack'][i] + full], icon: '⚠' }; }
       else {
-        const need = f.o.filter((o) => o[3] < o[2] && f.z[o[1]][0] && !f.z[o[1]][3]).sort((a, b) => b[1] - a[1] || a[4] - b[4]);
-        if (need.length) { const o = need[0]; g = { text: `🎣 ① 수조에서 ${FISH[o[1]].name} 건지기 (주문 ${o[3]}/${o[2]})`, st: STATION_BY_ID['tank' + o[1]], icon: '🎣' }; }
-        else { const top = f.z.reduce((a, z, i) => (z[0] ? i : a), 0); g = { text: `🎣 주문 대기 중 · ${FISH[top].name}을 미리 건져 두면 좋아요 (주문 없이 팔면 60%)`, st: STATION_BY_ID['tank' + top], icon: '🎣' }; }
-        const nx = f.z.findIndex((z) => !z[0]);
-        if (nx > 0 && f.m >= UNLOCK[nx]) g.sub = `💻 컴퓨터에서 ${FISH[nx].name} 구역을 열 수 있어요!`;
+        const manual = (z) => Z[z][0] && !Z[z][6];
+        const need = f.o.filter((o) => o[3] < o[2] && manual(o[1]) && !Z[o[1]][2]).sort((a, b) => b[1] - a[1] || a[4] - b[4]);
+        const src = (z) => (Z[z][3] && !Z[z][4] && Z[z][7] > 0 ? { text: `🧺 ${FISH[z].name} 바구니에서 줍기`, st: STATION_BY_ID['tank' + z] } : Z[z][4] && !Z[z][5] && Z[z][8] > 0 ? { text: `🧺 손질된 ${FISH[z].name} 꺼내기`, st: STATION_BY_ID['acut' + z] } : { text: `🎣 ① 수조에서 ${FISH[z].name} 건지기`, st: STATION_BY_ID['tank' + z] });
+        if (need.length) { const o = need[0]; const q = src(o[1]); g = { text: `${q.text} (주문 ${o[3]}/${o[2]})`, st: q.st, icon: '🎣' }; }
+        else {
+          let top = -1; for (let z = 4; z >= 0; z--) if (manual(z)) { top = z; break; }
+          if (top < 0) g = { text: '✅ 모든 라인이 자동이에요! 업그레이드와 이벤트에 집중해요', st: null };
+          else { const q = src(top); g = { text: `${q.text} · 주문이 없으면 60%에 팔려요`, st: q.st, icon: '🎣' }; }
+        }
+        if (cheap && g) g.sub = `💰 바닥 버튼으로 ${cheap.label} 구매 가능! (${fmt(cheap.price)})`;
       }
     }
     this.guide = g;
@@ -838,16 +992,17 @@ export class Game {
     const fsz = Math.round(12 * dpr);
     x.textAlign = 'center'; x.textBaseline = 'middle';
     SECTIONS.forEach((sec) => { const q = polar(13, sec.a); const [a, b] = P(q.x, q.y); x.font = `bold ${fsz}px Galmuri11, sans-serif`; x.fillStyle = sec.col; x.fillText(sec.n, a, b); });
-    const ICON = { tank: '🎣', mach: '⚙️', cut: '🔪', pack: '📦', pc: '💻', truck: '🚚', mop: '🧽', sofa: '🛋️', board: '📋' };
+    const ICON = { tank: '🎣', mach: '⚙️', cut: '🔪', pack: '📦', pc: '💻', truck: '🚚', mop: '🧽', sofa: '🛋️', board: '📋', acut: '⚙️', apack: '⚙️' };
     for (const st of STATIONS) {
       const [a, b] = P(st.x, st.y);
       let col = '#7d8794';
       if (st.kind === 'tank') col = s.f.z[st.z][0] ? FISH[st.z].color : '#444';
-      if (st.kind === 'mach' && s.f.z[st.z][2]) col = '#ff3b30';
+      if (st.kind === 'mach' && s.f.z[st.z][1]) col = '#ff3b30';
+      if ((st.kind === 'acut' && !s.f.z[st.z][4]) || (st.kind === 'apack' && !s.f.z[st.z][5]) || (st.kind === 'mach' && !s.f.z[st.z][3])) continue;
       x.fillStyle = col; x.fillRect(a, b, st.w * k, st.h * k);
       if (st.kind === 'tank' && s.f.o.some((o) => o[1] === st.z && o[3] < o[2]) && Math.floor(this.t * 3) % 2) { x.strokeStyle = '#ffe066'; x.lineWidth = 3 * dpr; x.strokeRect(a - 2 * dpr, b - 2 * dpr, st.w * k + 4 * dpr, st.h * k + 4 * dpr); }
       if (ICON[st.kind] && st.kind !== 'mach') { x.font = `${Math.round(fsz * 1.2)}px sans-serif`; x.fillText(ICON[st.kind], a + st.w * k / 2, b + st.h * k / 2); }
-      if (st.kind === 'mach' && s.f.z[st.z][2]) { x.font = `bold ${fsz}px sans-serif`; x.fillStyle = '#fff'; x.fillText('!', a + st.w * k / 2, b + st.h * k / 2); }
+      if (st.kind === 'mach' && s.f.z[st.z][1]) { x.font = `bold ${fsz}px sans-serif`; x.fillStyle = '#fff'; x.fillText('!', a + st.w * k / 2, b + st.h * k / 2); }
     }
     for (const c of this.cats.values()) { const [a, b] = P(c.x / TILE, c.y / TILE); x.font = `${fsz}px sans-serif`; x.fillText('🐱', a, b); }
     for (const [id, e] of this.ents) {
@@ -882,6 +1037,8 @@ export class Game {
     $('#count').classList.remove('show');
     $('#chatlog').innerHTML = '';
     $('#guide').innerHTML = '';
+    $('#buy').classList.remove('show');
+    $('#evbar').className = '';
   }
 }
 

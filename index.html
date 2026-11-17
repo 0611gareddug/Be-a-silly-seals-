@@ -126,6 +126,7 @@
 <h2>설정</h2>
 <label class="slider">배경음악 <input type="range" id="set-bgm" min="0" max="100"></label>
 <label class="slider">효과음 <input type="range" id="set-sfx" min="0" max="100"></label>
+<label class="slider">UI 크기 <select id="set-ui"><option value="0">작게</option><option value="1">보통</option><option value="2">크게</option></select></label>
 <label class="slider">화면 확대 <select id="set-zoom"><option value="0">넓게 보기</option><option value="1">보통</option><option value="2">크게 보기</option></select></label>
 <label class="slider">방향 화살표 <select id="set-arrows"><option value="1">켜기</option><option value="0">끄기</option></select></label>
 <label class="slider touch-only">버튼 투명도 <input type="range" id="set-alpha" min="25" max="100"></label>
@@ -163,11 +164,13 @@
 <div class="hud-stress"><span>스트레스</span><div class="bar" id="h-stress"><i></i></div><em id="h-stress-n">0</em></div>
 <div class="hud-warn">경고 <b id="h-warn">···</b></div>
 <div class="hud-toy" id="h-toy"></div>
+<div class="hud-combo" id="h-combo"></div>
 </div>
 </div>
 <div class="hud-c">
 <div class="hud-time" id="hud-time-wrap">⏱ <b id="h-time">0:00</b></div>
 <div class="hud-coop" id="hud-coop"><b id="h-day">월요일</b><div class="bar" id="h-target"><i></i></div><small id="h-target-n">0 / 0</small></div>
+<div id="evbar"></div>
 <div id="guide"></div>
 </div>
 <div class="hud-r">
@@ -177,6 +180,7 @@
 </div>
 <button id="btn-map" title="지도 (M)">🗺️<span>지도</span></button>
 <div id="mapov" class="modal"><div class="map-box"><canvas id="map-cv"></canvas><p>화면을 누르면 닫혀요 · PC는 M 키</p></div></div>
+<div id="buy"><div class="buy-ic" id="buy-ic">🎣</div><div class="buy-info"><b id="buy-name"></b><small id="buy-desc"></small><div class="buy-row"><span id="buy-price"></span><div class="bar" id="buy-bar"><i></i></div></div></div><div class="buy-btns"><button id="buy-no">취소</button><button id="buy-yes">구매 (E)</button></div></div>
 <div id="notice"></div>
 <div id="boss"><canvas id="boss-face" width="64" height="64"></canvas><div><b>사장님</b><p id="boss-txt"></p></div></div>
 <div id="chatlog"></div>
@@ -200,7 +204,7 @@
 <div class="modal-box">
 <div class="modal-head"><b>💻 공장 컴퓨터</b><span class="pc-money">💰 <b id="pc-money">0</b></span><button id="pc-close">✕</button></div>
 <div class="tabs" id="pc-tabs">
-<button data-tab="up" class="on">업그레이드</button>
+<button data-tab="up" class="on">공장 현황</button>
 <button data-tab="toy">장난감</button>
 <button data-tab="sab" id="pc-tab-sab">방해하기</button>
 <button data-tab="rank">순위</button>
